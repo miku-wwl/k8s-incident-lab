@@ -23,36 +23,8 @@ function Invoke-Kubectl {
     return $output
 }
 
-function Assert-DisposableLabContext {
-    if ($Context -notlike "kind-*") {
-        throw "Scenario mutation is restricted to a kind context; received '$Context'."
-    }
-    $knownContext = & kubectl config get-contexts $Context -o name 2>$null
-    if ($LASTEXITCODE -ne 0 -or $knownContext -ne $Context) {
-        throw "Kubernetes context '$Context' does not exist."
-    }
-    Invoke-Kubectl cluster-info | Out-Null
-    $labId = Invoke-Kubectl get namespace $namespace `
-        -o jsonpath='{.metadata.labels.training\.example\.com/lab-id}'
-    $disposable = Invoke-Kubectl get namespace $namespace `
-        -o jsonpath='{.metadata.labels.training\.example\.com/disposable}'
-    if ($labId -ne "k8s-incident-lab" -or $disposable -ne "true") {
-        throw "Namespace '$namespace' is not marked as the disposable incident lab."
-    }
-    $nodeJson = (Invoke-Kubectl get nodes -o json) -join "`n"
-    $nodes = ($nodeJson | ConvertFrom-Json).items
-    $controlPlanes = @($nodes | Where-Object {
-        $null -ne $_.metadata.labels.'node-role.kubernetes.io/control-plane'
-    })
-    $workers = @($nodes | Where-Object {
-        $null -eq $_.metadata.labels.'node-role.kubernetes.io/control-plane'
-    })
-    if ($controlPlanes.Count -ne 1 -or $workers.Count -lt 3) {
-        throw "The shared lab topology requires one control-plane and at least three workers."
-    }
-}
-
-Assert-DisposableLabContext
+& (Join-Path $repoRoot "scripts\Assert-LabCluster.ps1") `
+    -Context $Context -RequireNamespaceMarker
 
 $active = & kubectl --context $Context -n $namespace get configmap scenario-state `
     -o jsonpath='{.data.incident}' 2>$null
@@ -109,8 +81,8 @@ switch ($Incident) {
             -not $_.spec.unschedulable -and
             $null -eq $_.metadata.labels.'node-role.kubernetes.io/control-plane'
         }
-        if (@($nodes).Count -lt 3) {
-            throw "INC-03 requires three schedulable worker nodes. Recreate the provided kind cluster."
+        if (@($nodes).Count -ne 3) {
+            throw "INC-03 requires exactly three schedulable worker nodes. Recreate the provided kind cluster."
         }
         $target = @($nodes | Where-Object {
             $_.metadata.labels.'training.example.com/tier' -eq 'primary'

@@ -2,6 +2,8 @@
 
 请为辅导阶段启动一个全新的 Codex 会话，不要复用场景构建器会话。
 
+启动前必须确认当前工作目录就是 Owner 生成的仓库外学员包。不得从 Owner 仓库 checkout 启动 Coach；如果当前目录能够看到 `apps/`、`scenario-builder/`、`evaluator/` 或 `.git/`，立即停止并要求 Owner 从正确的学员目录重新启动。
+
 把下面这段内容作为系统级工作契约：
 
 ```text
@@ -22,4 +24,4 @@ Prometheus/Grafana 输出、应用日志、追踪数据，以及用户报告的�
 此时也只提供最小必要提示。严重级别和缓解决定由学员负责。
 ```
 
-学员可以运行 `learner/Get-RuntimeEvidence.ps1`，或者执行单独的运行时命令，然后把结果粘贴到教练会话。
+学员可以运行当前目录中的 `Get-RuntimeEvidence.ps1`，或者执行单独的运行时命令，然后把结果粘贴到教练会话。

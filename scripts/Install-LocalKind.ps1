@@ -1,10 +1,12 @@
 [CmdletBinding()]
 param(
-    [string]$Version = "v0.32.0"
+    [string]$Version
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$versions = Import-PowerShellDataFile (Join-Path $PSScriptRoot "LabVersions.psd1")
+if (-not $Version) { $Version = $versions.Kind }
 $toolsDirectory = Join-Path $repoRoot ".tools"
 $kindPath = Join-Path $toolsDirectory "kind.exe"
 

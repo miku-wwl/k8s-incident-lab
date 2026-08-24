@@ -31,6 +31,8 @@ Grafana    <- Prometheus
 
 教练必须运行在全新的会话中，因为提示词指令无法清除另一个会话已经看过的上下文。学员和教练都不能获得完整 checkout；这样可以在文件分发层面阻断源代码、Builder 脚本和 Ground Truth，而不只是依赖行为约定。
 
+Coach Codex 必须以仓库外生成的学员包作为工作目录启动，不能从 Owner checkout 启动。Owner 仓库是控制面，学员包是调查面；`Test-LearnerBundleIsolation.ps1` 使用九文件 allowlist、目录/链接拒绝和仓库外路径检查来验证这一物理边界。
+
 ## 场景生命周期不变量
 
 每次运行都必须经过以下证据门：

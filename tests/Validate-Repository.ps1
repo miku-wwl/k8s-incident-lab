@@ -76,7 +76,7 @@ $publicFiles = @(
 )
 $spoilerPatterns = [ordered]@{
     "INC-05 listener/routing mechanism" = '(gateway-rollout|端口.{0,12}不一致|selector mismatch|选择器不匹配|零个端点|EndpointSlice 地址数为零)'
-    "INC-07 storage mechanism" = '(storage-maintenance|SQLite.{0,12}(lock|锁)|文件系统.{0,12}(权限|只读)|chmod|chown)'
+    "INC-07 storage mechanism" = '(storage-maintenance|SQLite.{0,12}(lock|锁)|文件系统.{0,12}(写权限|变为只读|只读挂载)|chmod|chown)'
     "INC-08 resolver mechanism" = '(discovery-probe|Resolver capacity rollout|CoreDNS.{0,12}(配置错误|CPU|限流)|SERVFAIL|查询放大)'
     "scenario answer language" = '(intentionally broken|expected fix|incident cause)'
 }
@@ -94,6 +94,55 @@ $controlPlaneCount = [regex]::Matches($kindConfig, '(?m)^\s*- role: control-plan
 $workerCount = [regex]::Matches($kindConfig, '(?m)^\s*- role: worker\s*$').Count
 if ($controlPlaneCount -ne 1 -or $workerCount -ne 3) {
     Add-Failure "kind topology must contain one control-plane and three workers."
+}
+
+$topologyGuard = Join-Path $repoRoot "scripts\Assert-LabCluster.ps1"
+if (-not (Test-Path -LiteralPath $topologyGuard -PathType Leaf)) {
+    Add-Failure "Missing shared kind topology guard."
+} else {
+    $guardContent = Get-Content -Raw -LiteralPath $topologyGuard
+    if ($guardContent -notmatch '\$controlPlaneCount\s+-ne\s+1' -or
+        $guardContent -notmatch '\$workerCount\s+-ne\s+3') {
+        Add-Failure "Shared topology guard must require exactly one control-plane and three workers."
+    }
+}
+
+$guardedWorkflows = @(
+    "scripts\Start-Lab.ps1",
+    "scripts\Test-Lab.ps1",
+    "scripts\Open-Dashboards.ps1",
+    "scenario-builder\Start-Scenario.ps1",
+    "scenario-builder\Reset-Scenario.ps1",
+    "scenario-builder\Test-Scenario.ps1",
+    "scripts\Invoke-FullValidation.ps1"
+)
+foreach ($relativePath in $guardedWorkflows) {
+    $workflowPath = Join-Path $repoRoot $relativePath
+    $workflowContent = Get-Content -Raw -LiteralPath $workflowPath
+    if ($workflowContent -notmatch 'Assert-LabCluster\.ps1') {
+        Add-Failure "Cluster workflow does not use the shared exact-topology guard: $relativePath"
+    }
+}
+$scenarioStartContent = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scenario-builder\Start-Scenario.ps1")
+if ($scenarioStartContent -match 'workers\.Count\s+-lt\s+3|at least three workers|至少三个工作节点') {
+    Add-Failure "Scenario start still accepts more than the exact three-worker topology."
+}
+
+$versionFile = Join-Path $repoRoot "scripts\LabVersions.psd1"
+if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) {
+    Add-Failure "Missing validated runtime version manifest."
+} else {
+    $versions = Import-PowerShellDataFile $versionFile
+    foreach ($key in @("Kind", "Kubernetes", "MetricsServerChart", "MetricsServerApp", "KedaChart", "KedaApp", "Prometheus", "Grafana", "KubeStateMetrics", "Python")) {
+        if (-not $versions[$key]) { Add-Failure "Missing pinned version value: $key" }
+    }
+    $startLabContent = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts\Start-Lab.ps1")
+    if ($startLabContent -notmatch '--version\s+\$MetricsServerChartVersion') {
+        Add-Failure "metrics-server Helm install is not explicitly version-pinned."
+    }
+    if ($startLabContent -notmatch '--version\s+\$KedaChartVersion') {
+        Add-Failure "KEDA Helm install is not explicitly version-pinned."
+    }
 }
 
 $scorecardPath = Join-Path $repoRoot "learner\scorecard.md"
@@ -123,6 +172,90 @@ $boundaryScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scenario-b
 foreach ($forbiddenCopy in @("apps", "platform", "scenario-builder", "evaluator", ".git")) {
     if ($boundaryScript -match "Copy-Item[^`n]+$([regex]::Escape($forbiddenCopy))") {
         Add-Failure "Learner bundle script may copy owner-only material: $forbiddenCopy"
+    }
+}
+if ($boundaryScript -notmatch 'Test-LearnerBundleIsolation\.ps1') {
+    Add-Failure "Learner bundle generator does not enforce the structural isolation test."
+}
+
+$bundleTestRoot = Join-Path ([IO.Path]::GetTempPath()) `
+    ("k8s-incident-lab-bundle-test-{0}" -f [guid]::NewGuid().ToString("N"))
+try {
+    & (Join-Path $repoRoot "scenario-builder\New-LearnerBundle.ps1") `
+        -Incident INC-01 -OutputPath $bundleTestRoot | Out-Null
+    & (Join-Path $repoRoot "tests\Test-LearnerBundleIsolation.ps1") `
+        -BundlePath $bundleTestRoot -OwnerRepositoryRoot $repoRoot | Out-Null
+}
+catch {
+    Add-Failure "Dynamic learner bundle isolation validation failed: $($_.Exception.Message)"
+}
+finally {
+    if (Test-Path -LiteralPath $bundleTestRoot) {
+        $resolvedBundleTest = (Resolve-Path -LiteralPath $bundleTestRoot).Path
+        $temporaryPrefix = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if (-not $resolvedBundleTest.StartsWith($temporaryPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            Add-Failure "Refused to clean bundle test path outside the system temporary directory."
+        } else {
+            Remove-Item -LiteralPath $resolvedBundleTest -Recurse -Force
+        }
+    }
+}
+
+$schemaPath = Join-Path $repoRoot "evidence\validation-summary.schema.json"
+if (-not (Test-Path -LiteralPath $schemaPath -PathType Leaf)) {
+    Add-Failure "Missing validation evidence schema."
+} else {
+    try { $null = Get-Content -Raw -LiteralPath $schemaPath | ConvertFrom-Json }
+    catch { Add-Failure "Validation evidence schema is not valid JSON." }
+}
+
+$evidencePath = Join-Path $repoRoot "evidence\validation-summary.json"
+if (Test-Path -LiteralPath $evidencePath -PathType Leaf) {
+    try {
+        if (-not (Test-Json -LiteralPath $evidencePath -SchemaFile $schemaPath -ErrorAction Stop)) {
+            Add-Failure "Validation evidence does not conform to its JSON schema."
+        }
+        $evidenceRaw = Get-Content -Raw -LiteralPath $evidencePath
+        $evidence = $evidenceRaw | ConvertFrom-Json
+        $requiredEvidenceFields = @(
+            "schema_version", "generated_at", "validation_mode", "overall_status", "repository",
+            "environment", "repository_checks", "baseline", "scenarios", "final_recovery"
+        )
+        foreach ($field in $requiredEvidenceFields) {
+            if ($evidence.PSObject.Properties.Name -notcontains $field) {
+                Add-Failure "Validation evidence is missing field: $field"
+            }
+        }
+        if ($evidence.schema_version -ne 1) { Add-Failure "Validation evidence schema_version must be 1." }
+        if ($evidence.environment.control_plane_nodes -ne 1 -or $evidence.environment.worker_nodes -ne 3) {
+            Add-Failure "Validation evidence topology must be exactly 1+3."
+        }
+        $scenarioNames = @($evidence.scenarios.PSObject.Properties.Name | Sort-Object)
+        $expectedScenarioNames = @(1..8 | ForEach-Object { "INC-{0:d2}" -f $_ })
+        if (@(Compare-Object $expectedScenarioNames $scenarioNames).Count -ne 0) {
+            Add-Failure "Validation evidence must contain exactly INC-01 through INC-08."
+        }
+        $allowedStatuses = @("PASS", "FAIL", "NOT_RUN")
+        foreach ($scenarioName in $scenarioNames) {
+            $scenarioResult = $evidence.scenarios.$scenarioName
+            foreach ($field in @("pre_activation_baseline", "activation", "symptom_validation", "runtime_evidence", "reset", "recovery")) {
+                if ($allowedStatuses -notcontains $scenarioResult.$field) {
+                    Add-Failure "Invalid evidence status for $scenarioName/$field."
+                }
+            }
+        }
+        $evidenceSpoilers = @(
+            'selector mismatch', 'SQLite lock', 'CoreDNS.{0,12}(CPU|限流|配置错误)',
+            '文件系统.{0,12}(权限|只读)', 'expected solution', 'root cause'
+        )
+        foreach ($pattern in $evidenceSpoilers) {
+            if ($evidenceRaw -match $pattern) {
+                Add-Failure "Validation evidence contains scenario-answer material."
+            }
+        }
+    }
+    catch {
+        Add-Failure "Validation evidence is not structurally valid JSON: $($_.Exception.Message)"
     }
 }
 

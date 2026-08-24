@@ -5,6 +5,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$repoRoot = Split-Path -Parent $PSScriptRoot
+& (Join-Path $PSScriptRoot "Assert-LabCluster.ps1") -Context $Context -RequireNamespaceMarker
 $kubectl = (Get-Command kubectl).Source
 $workingDirectory = (Get-Location).Path
 

@@ -33,8 +33,22 @@ Copy-Item -LiteralPath (Join-Path $learnerRoot "scorecard.md") -Destination $out
 Copy-Item -LiteralPath (Join-Path $learnerRoot "BUNDLE-README.md") `
     -Destination (Join-Path $outputFull "README.md")
 
-$contents = Get-ChildItem -LiteralPath $outputFull -File | Sort-Object Name | Select-Object -ExpandProperty Name
+$contents = @(
+    "BUNDLE-CONTENTS.txt",
+    "COACH-PROMPT.md",
+    "Get-RuntimeEvidence.ps1",
+    "incident-brief.md",
+    "investigation.md",
+    "postmortem.md",
+    "README.md",
+    "scorecard.md",
+    "timeline.md"
+) | Sort-Object
 $contents | Set-Content -LiteralPath (Join-Path $outputFull "BUNDLE-CONTENTS.txt") -Encoding utf8
+
+& (Join-Path $repoRoot "tests\Test-LearnerBundleIsolation.ps1") `
+    -BundlePath $outputFull -OwnerRepositoryRoot $repoRoot
 
 Write-Output "LEARNER_BUNDLE_READY incident=$Incident path=$outputFull"
 Write-Output "The bundle excludes source, Builder scripts, evaluator rubrics and ground truth."
+Write-Output "Start Coach Codex with '$outputFull' as its working directory."

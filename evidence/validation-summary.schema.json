@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://training.example.com/k8s-incident-lab/validation-summary.schema.json",
+  "title": "Kubernetes Incident Lab Validation Summary",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "validation_mode",
+    "overall_status",
+    "repository",
+    "environment",
+    "repository_checks",
+    "baseline",
+    "scenarios",
+    "final_recovery"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "validation_mode": { "enum": ["BaselineOnly", "SingleScenario", "FullMatrix"] },
+    "overall_status": { "$ref": "#/$defs/status" },
+    "repository": {
+      "type": "object",
+      "required": ["branch", "commit", "working_tree_dirty"],
+      "properties": {
+        "branch": { "type": "string" },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "working_tree_dirty": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "environment": {
+      "type": "object",
+      "required": [
+        "kind_version", "kubernetes_version", "control_plane_nodes", "worker_nodes",
+        "keda_chart_version", "keda_app_version", "metrics_server_chart_version",
+        "metrics_server_app_version", "prometheus_version", "grafana_version",
+        "kube_state_metrics_version", "python_version"
+      ],
+      "properties": {
+        "kind_version": { "type": "string" },
+        "kubernetes_version": { "type": "string" },
+        "control_plane_nodes": { "const": 1 },
+        "worker_nodes": { "const": 3 },
+        "keda_chart_version": { "type": "string" },
+        "keda_app_version": { "type": "string" },
+        "metrics_server_chart_version": { "type": "string" },
+        "metrics_server_app_version": { "type": "string" },
+        "prometheus_version": { "type": "string" },
+        "grafana_version": { "type": "string" },
+        "kube_state_metrics_version": { "type": "string" },
+        "python_version": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "repository_checks": { "$ref": "#/$defs/statusObject" },
+    "baseline": { "$ref": "#/$defs/statusObject" },
+    "scenarios": {
+      "type": "object",
+      "required": ["INC-01", "INC-02", "INC-03", "INC-04", "INC-05", "INC-06", "INC-07", "INC-08"],
+      "additionalProperties": { "$ref": "#/$defs/scenarioResult" }
+    },
+    "final_recovery": { "$ref": "#/$defs/statusObject" },
+    "failure": {
+      "type": "object",
+      "required": ["step"],
+      "properties": {
+        "incident": { "type": ["string", "null"] },
+        "step": { "type": "string" },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "status": { "enum": ["PASS", "FAIL", "NOT_RUN"] },
+    "statusObject": {
+      "type": "object",
+      "required": ["status"],
+      "properties": { "status": { "$ref": "#/$defs/status" } },
+      "additionalProperties": false
+    },
+    "scenarioResult": {
+      "type": "object",
+      "required": ["pre_activation_baseline", "activation", "symptom_validation", "runtime_evidence", "reset", "recovery"],
+      "properties": {
+        "pre_activation_baseline": { "$ref": "#/$defs/status" },
+        "activation": { "$ref": "#/$defs/status" },
+        "symptom_validation": { "$ref": "#/$defs/status" },
+        "runtime_evidence": { "$ref": "#/$defs/status" },
+        "reset": { "$ref": "#/$defs/status" },
+        "recovery": { "$ref": "#/$defs/status" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

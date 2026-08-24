@@ -5,26 +5,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$repoRoot = Split-Path -Parent $PSScriptRoot
 $namespace = "incident-lab"
 
-if ($Context -notlike "kind-*") {
-    throw "Baseline verification is restricted to a disposable kind context; received '$Context'."
-}
-& kubectl --context $Context cluster-info | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Kubernetes context '$Context' is not reachable." }
-
-$nodeJson = (& kubectl --context $Context get nodes -o json) -join "`n"
-if ($LASTEXITCODE -ne 0) { throw "Could not inspect kind cluster topology." }
-$nodes = ($nodeJson | ConvertFrom-Json).items
-$controlPlaneCount = @($nodes | Where-Object {
-    $null -ne $_.metadata.labels.'node-role.kubernetes.io/control-plane'
-}).Count
-$workerCount = @($nodes | Where-Object {
-    $null -eq $_.metadata.labels.'node-role.kubernetes.io/control-plane'
-}).Count
-if ($controlPlaneCount -ne 1 -or $workerCount -ne 3) {
-    throw "Baseline topology is not one control-plane plus three workers."
-}
+& (Join-Path $PSScriptRoot "Assert-LabCluster.ps1") -Context $Context -RequireNamespaceMarker
 Write-Output "kind topology: 1 control-plane + 3 workers"
 
 $activeScenario = & kubectl --context $Context -n $namespace get configmap scenario-state `

@@ -8,11 +8,39 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $true
 $namespace = "incident-lab"
+
+if ($Context -notlike "kind-*") {
+    throw "运行时取证仅允许使用一次性 kind 上下文；收到 '$Context'。"
+}
+$knownContext = & kubectl config get-contexts $Context -o name 2>$null
+if ($LASTEXITCODE -ne 0 -or $knownContext -ne $Context) {
+    throw "Kubernetes 上下文 '$Context' 不存在。"
+}
+$nodeJson = (& kubectl --context $Context get nodes -o json) -join "`n"
+$nodes = ($nodeJson | ConvertFrom-Json).items
+$controlPlaneCount = @($nodes | Where-Object {
+    $null -ne $_.metadata.labels.'node-role.kubernetes.io/control-plane'
+}).Count
+$workerCount = @($nodes | Where-Object {
+    $null -eq $_.metadata.labels.'node-role.kubernetes.io/control-plane'
+}).Count
+if ($controlPlaneCount -ne 1 -or $workerCount -ne 3) {
+    throw "实验室拓扑必须精确为 1 个 control-plane 和 3 个 workers。"
+}
+$labId = & kubectl --context $Context get namespace $namespace `
+    -o jsonpath='{.metadata.labels.training\.example\.com/lab-id}'
+if ($labId -ne "k8s-incident-lab") {
+    throw "命名空间 '$namespace' 不是预期的事件实验室。"
+}
 
 function Show-Command([string]$Label, [scriptblock]$Command) {
     Write-Output "`n### $Label"
     & $Command
+    if ($LASTEXITCODE -ne 0) {
+        throw "运行时取证命令失败：$Label"
+    }
 }
 
 switch ($Area) {
@@ -25,7 +53,8 @@ switch ($Area) {
     "changes" {
         Show-Command "发布历史" { kubectl --context $Context -n $namespace rollout history deployment/gateway }
         Show-Command "Deployment 版本与变更注解" { kubectl --context $Context -n $namespace get deployment -o custom-columns='NAME:.metadata.name,CHANGE:.metadata.annotations.kubernetes\.io/change-cause,IMAGES:.spec.template.spec.containers[*].image' }
-        Show-Command "近期 ReplicaSet 与 Job" { kubectl --context $Context -n $namespace get replicaset,job --sort-by=.metadata.creationTimestamp -o wide }
+        Show-Command "近期 ReplicaSet" { kubectl --context $Context -n $namespace get replicaset --sort-by=.metadata.creationTimestamp -o wide }
+        Show-Command "近期 Job" { kubectl --context $Context -n $namespace get job --sort-by=.metadata.creationTimestamp -o wide }
         Show-Command "近期集群事件" { kubectl --context $Context -n $namespace get events --sort-by=.lastTimestamp }
     }
     "service-path" {
@@ -42,7 +71,8 @@ switch ($Area) {
         Show-Command "资源 requests 与 limits" { kubectl --context $Context -n $namespace get pods -o custom-columns='NAME:.metadata.name,CPU_REQ:.spec.containers[*].resources.requests.cpu,CPU_LIMIT:.spec.containers[*].resources.limits.cpu' }
     }
     "queue" {
-        Show-Command "Worker 与伸缩器" { kubectl --context $Context -n $namespace get deployment/worker,hpa,scaledobject -o wide }
+        Show-Command "Worker" { kubectl --context $Context -n $namespace get deployment/worker -o wide }
+        Show-Command "队列伸缩器" { kubectl --context $Context -n $namespace get hpa,scaledobject -o wide }
         Show-Command "队列信号" { kubectl --context $Context -n lab-observability exec deployment/prometheus -- wget -qO- 'http://localhost:9090/api/v1/query?query=max%28lab_queue_depth%29%20or%20max%28lab_oldest_message_age_seconds%29' }
         Show-Command "Worker 日志" { kubectl --context $Context -n $namespace logs deployment/worker --tail=80 }
     }

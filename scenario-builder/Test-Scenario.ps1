@@ -12,6 +12,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$repoRoot = Split-Path -Parent $PSScriptRoot
 $namespace = "incident-lab"
 
 function Get-PrometheusValue([string]$Expression) {
@@ -32,9 +33,8 @@ function Assert-GreaterThan([string]$Name, [double]$Actual, [double]$Threshold) 
     Write-Output "PASS $Name=$Actual"
 }
 
-if ($Context -notlike "kind-*") {
-    throw "Scenario verification is restricted to a kind context; received '$Context'."
-}
+& (Join-Path $repoRoot "scripts\Assert-LabCluster.ps1") `
+    -Context $Context -RequireNamespaceMarker
 
 $active = & kubectl --context $Context -n $namespace get configmap scenario-state `
     -o jsonpath='{.data.incident}' 2>$null
@@ -117,9 +117,9 @@ switch ($Incident) {
             -o jsonpath='{.status.succeeded}'
         if ([int]$job -ne 1) { throw "The maintenance operation did not complete." }
         Write-Output "PASS storage_maintenance_completed=$job"
-        $errors = Get-PrometheusValue 'sum(rate(lab_storage_errors_total{operation="write"}[15s]))'
-        $writeFailures = Get-PrometheusValue 'sum(rate(lab_load_requests_total{target=~".*storage.*write",result!~"2.."}[15s]))'
-        $readSuccess = Get-PrometheusValue 'sum(rate(lab_load_requests_total{target=~".*storage.*read",result="200"}[15s]))'
+        $errors = Get-PrometheusValue 'sum(rate(lab_storage_errors_total{operation="write"}[1m]))'
+        $writeFailures = Get-PrometheusValue 'sum(rate(lab_load_requests_total{target=~".*storage.*write",result!~"2.."}[1m]))'
+        $readSuccess = Get-PrometheusValue 'sum(rate(lab_load_requests_total{target=~".*storage.*read",result="200"}[1m]))'
         Assert-GreaterThan "storage_write_errors_per_second" $errors 0.1
         Assert-GreaterThan "failed_storage_writes_per_second" $writeFailures 0.1
         Assert-GreaterThan "successful_storage_reads_per_second" $readSuccess 0.1
@@ -127,7 +127,7 @@ switch ($Incident) {
     "INC-08" {
         $ready = & kubectl --context $Context -n $namespace get deployment/discovery-probe `
             -o jsonpath='{.status.readyReplicas}'
-        if ([int]$ready -lt 3) { throw "Discovery probe workload is not Ready." }
+        if ([int]$ready -lt 4) { throw "Discovery probe workload is not Ready." }
         Write-Output "PASS discovery_probe_ready_replicas=$ready"
         $coreDnsReady = & kubectl --context $Context -n kube-system get deployment/coredns `
             -o jsonpath='{.status.readyReplicas}'

@@ -18,25 +18,8 @@ function Invoke-Kubectl {
     return $output
 }
 
-function Assert-DisposableLabContext {
-    if ($Context -notlike "kind-*") {
-        throw "Scenario mutation is restricted to a kind context; received '$Context'."
-    }
-    $knownContext = & kubectl config get-contexts $Context -o name 2>$null
-    if ($LASTEXITCODE -ne 0 -or $knownContext -ne $Context) {
-        throw "Kubernetes context '$Context' does not exist."
-    }
-    Invoke-Kubectl cluster-info | Out-Null
-    $labId = Invoke-Kubectl get namespace $namespace `
-        -o jsonpath='{.metadata.labels.training\.example\.com/lab-id}'
-    $disposable = Invoke-Kubectl get namespace $namespace `
-        -o jsonpath='{.metadata.labels.training\.example\.com/disposable}'
-    if ($labId -ne "k8s-incident-lab" -or $disposable -ne "true") {
-        throw "Namespace '$namespace' is not marked as the disposable incident lab."
-    }
-}
-
-Assert-DisposableLabContext
+& (Join-Path $repoRoot "scripts\Assert-LabCluster.ps1") `
+    -Context $Context -RequireNamespaceMarker
 
 $incident = & kubectl --context $Context -n $namespace get configmap scenario-state `
     -o jsonpath='{.data.incident}' 2>$null

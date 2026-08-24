@@ -10,6 +10,9 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $namespace = "incident-lab"
 $clusterName = "incident-lab"
+$versions = Import-PowerShellDataFile (Join-Path $PSScriptRoot "LabVersions.psd1")
+$MetricsServerChartVersion = $versions.MetricsServerChart
+$KedaChartVersion = $versions.KedaChart
 
 foreach ($command in @("docker", "kubectl", "helm")) {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
@@ -31,24 +34,7 @@ if (-not $Context) {
     throw "Pass -Context explicitly, or use -CreateKindCluster for the disposable local cluster."
 }
 
-& kubectl --context $Context cluster-info | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Kubernetes context '$Context' is not reachable." }
-
-if ($Context -notlike "kind-*") {
-    throw "This lab is restricted to disposable kind contexts; received '$Context'."
-}
-$nodeJson = (& kubectl --context $Context get nodes -o json) -join "`n"
-if ($LASTEXITCODE -ne 0) { throw "Could not inspect kind cluster topology." }
-$nodes = ($nodeJson | ConvertFrom-Json).items
-$controlPlaneCount = @($nodes | Where-Object {
-    $null -ne $_.metadata.labels.'node-role.kubernetes.io/control-plane'
-}).Count
-$workerCount = @($nodes | Where-Object {
-    $null -eq $_.metadata.labels.'node-role.kubernetes.io/control-plane'
-}).Count
-if ($controlPlaneCount -ne 1 -or $workerCount -ne 3) {
-    throw "Expected one control-plane and three workers; found $controlPlaneCount control-plane and $workerCount workers. Recreate the disposable kind cluster."
-}
+& (Join-Path $PSScriptRoot "Assert-LabCluster.ps1") -Context $Context
 
 if (-not $SkipBuild) {
     foreach ($release in @("1.0.0", "1.1.0", "2.0.0")) {
@@ -71,11 +57,13 @@ if (-not $SkipAddons) {
     & helm repo update | Out-Null
     & helm upgrade --install metrics-server metrics-server/metrics-server `
         --kube-context $Context --namespace kube-system `
+        --version $MetricsServerChartVersion `
         --values (Join-Path $repoRoot "platform\addons\metrics-server-values.yaml") `
         --wait --timeout 5m
     if ($LASTEXITCODE -ne 0) { throw "metrics-server installation failed." }
     & helm upgrade --install keda kedacore/keda `
         --kube-context $Context --namespace keda --create-namespace `
+        --version $KedaChartVersion `
         --wait --timeout 5m
     if ($LASTEXITCODE -ne 0) { throw "KEDA installation failed." }
 }

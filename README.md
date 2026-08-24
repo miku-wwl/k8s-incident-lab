@@ -80,7 +80,9 @@ C:\gameday\INC-01\
 ├── postmortem.md
 ├── Get-RuntimeEvidence.ps1
 ├── COACH-PROMPT.md
-└── scorecard.md
+├── scorecard.md
+├── README.md
+└── BUNDLE-CONTENTS.txt
 ```
 
 你可以使用普通运行时命令，也可以收集范围明确的证据视图：
@@ -95,7 +97,14 @@ C:\gameday\INC-01\
 
 ### 3. 全新的教练会话
 
-启动一个新的 Codex 会话，并提供安全包中的 `COACH-PROMPT.md`。教练只能使用真实响应者能够获取的证据，禁止访问完整仓库、源码、Git 历史、场景构建器和 Evaluator 材料。
+先切换到生成后的仓库外学员目录，再从该目录启动一个新的 Codex 会话，并提供安全包中的 `COACH-PROMPT.md`：
+
+```powershell
+Set-Location C:\gameday\INC-01
+# 必须从这里启动 Coach Codex
+```
+
+Coach Codex **不得从 Owner 仓库 checkout 启动**。Owner 仓库是控制面，生成的学员包是调查面。教练只能使用真实响应者能够获取的证据，并且在文件系统层面看不到完整仓库、源码、Git 历史、场景构建器和 Evaluator 材料。
 
 ### 4. 恢复、提交 RCA 与证据门
 
@@ -145,6 +154,7 @@ Ground Truth 只会出现在调查关闭后的 Evaluator 包中，不会进入�
 
 ```text
 apps/lab-service/          可复用的同步、异步和有状态实验工作负载
+evidence/                  不含答案的机器可读运行验证证据
 platform/base/             健康工作负载、流量、HPA 和 PDB
 platform/observability/    Prometheus、症状型告警、Grafana 和 kube-state-metrics
 platform/addons/           metrics-server values 和 KEDA 队列伸缩配置
@@ -164,3 +174,18 @@ tests/                     仓库静态验证
 ```
 
 该脚本检查 Python 语法、PowerShell 解析、Kustomize/场景清单、四节点拓扑、评分卡总分、Evaluator 完整性、敏感信息以及学员可见内容的剧透边界。真实集群运行仍然是独立的证据层。
+
+## 已验证实验版本
+
+以下版本来自当前通过验证的本地环境，并由 `scripts/LabVersions.psd1` 统一维护：
+
+| 组件 | 版本 |
+|---|---|
+| kind | `v0.32.0` |
+| Kubernetes | `v1.36.1` |
+| KEDA chart / app | `2.20.2` / `2.20.2` |
+| metrics-server chart / app | `3.14.0` / `0.9.0` |
+| Prometheus | `v3.5.0` |
+| Grafana | `12.1.1` |
+| kube-state-metrics | `v2.15.0` |
+| Python | `3.13.7` |
