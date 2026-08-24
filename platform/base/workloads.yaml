@@ -1,0 +1,519 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: identity
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/name: identity
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: identity
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: identity
+        app.kubernetes.io/part-of: k8s-incident-lab
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      containers:
+        - name: app
+          image: k8s-incident-lab/service:1.0.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SERVICE_ROLE
+              value: identity
+            - name: SERVICE_DELAY_SECONDS
+              value: "0.04"
+            - name: MAX_INFLIGHT
+              value: "3"
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 192Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: identity
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/name: identity
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  selector:
+    app.kubernetes.io/name: identity
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/name: catalog
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: catalog
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: catalog
+        app.kubernetes.io/part-of: k8s-incident-lab
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      containers:
+        - name: app
+          image: k8s-incident-lab/service:1.0.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SERVICE_ROLE
+              value: catalog
+            - name: SERVICE_DELAY_SECONDS
+              value: "0.015"
+            - name: SHARED_URL
+              value: http://identity:8080
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 192Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/name: catalog
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  selector:
+    app.kubernetes.io/name: catalog
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/name: gateway
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gateway
+        app.kubernetes.io/part-of: k8s-incident-lab
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      containers:
+        - name: app
+          image: k8s-incident-lab/service:1.0.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SERVICE_ROLE
+              value: gateway
+            - name: CATALOG_URL
+              value: http://catalog:8080
+            - name: MAX_INFLIGHT
+              value: "2"
+            - name: QUEUE_WAIT_TIMEOUT_SECONDS
+              value: "0.08"
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 500m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 192Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/name: gateway
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/part-of: k8s-incident-lab
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4.5-alpine
+          args: ["redis-server", "--appendonly", "yes"]
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/name: orders
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orders
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: orders
+        app.kubernetes.io/part-of: k8s-incident-lab
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      containers:
+        - name: app
+          image: k8s-incident-lab/service:1.0.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SERVICE_ROLE
+              value: orders
+            - name: REDIS_URL
+              value: redis://redis:6379/0
+            - name: SHARED_URL
+              value: http://identity:8080
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 192Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/name: orders
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  selector:
+    app.kubernetes.io/name: orders
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/name: worker
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: worker
+        app.kubernetes.io/part-of: k8s-incident-lab
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      containers:
+        - name: app
+          image: k8s-incident-lab/service:1.0.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SERVICE_ROLE
+              value: worker
+            - name: REDIS_URL
+              value: redis://redis:6379/0
+            - name: WORK_SECONDS
+              value: "0.25"
+          ports:
+            - name: metrics
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 192Mi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: storage
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/name: storage
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  serviceName: storage
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: storage
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: storage
+        app.kubernetes.io/part-of: k8s-incident-lab
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      containers:
+        - name: app
+          image: k8s-incident-lab/service:1.0.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SERVICE_ROLE
+              value: storage
+            - name: SQLITE_PATH
+              value: /data/lab.db
+            - name: SQLITE_TIMEOUT_SECONDS
+              value: "0.35"
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 192Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+        - name: maintenance
+          image: k8s-incident-lab/service:1.0.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SERVICE_ROLE
+              value: maintenance
+            - name: PORT
+              value: "9091"
+            - name: SQLITE_PATH
+              value: /data/lab.db
+            - name: MAINTENANCE_INTERVAL_SECONDS
+              value: "3600"
+            - name: MAINTENANCE_HOLD_SECONDS
+              value: "0.05"
+          ports:
+            - name: maint-metrics
+              containerPort: 9091
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storage
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/name: storage
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  selector:
+    app.kubernetes.io/name: storage
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

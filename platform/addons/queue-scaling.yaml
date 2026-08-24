@@ -1,0 +1,21 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  scaleTargetRef:
+    name: worker
+  pollingInterval: 5
+  cooldownPeriod: 30
+  minReplicaCount: 2
+  maxReplicaCount: 8
+  triggers:
+    - type: redis
+      metadata:
+        address: redis.incident-lab.svc.cluster.local:6379
+        listName: orders
+        listLength: "20"
+        enableTLS: "false"

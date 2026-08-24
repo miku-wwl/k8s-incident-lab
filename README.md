@@ -1,2 +1,147 @@
-# k8s-incident-lab
-Production-style Kubernetes Incident Management GameDays for SRE training
+# Kubernetes 事件管理实验室
+
+这是一个覆盖八类事件的 Kubernetes GameDay 实战实验室，用于训练生产风格的 SRE 推理能力。实验室严格遵循以下生命周期：
+
+```text
+设计 -> 复现 -> 诊断 -> 缓解 -> 恢复 -> 根因分析 -> 事后复盘
+```
+
+环境会从健康状态启动，持续运行具有代表性的流量，并通过 Kubernetes 运行时状态、日志以及 Prometheus/Grafana 暴露症状。场景变更使用真实的发布、负载、中断、Service 路由、队列、有状态服务和 DNS 行为，不存在通过 `INCIDENT_MODE` 直接切换错误响应的做法。
+
+## 安全边界
+
+请只使用一次性的专用集群。`INC-03` 会排空一个工作节点，`INC-08` 会临时修改 CoreDNS 配置。绝对不要针对共享集群或生产环境运行场景构建器命令。
+
+所有会修改集群的脚本都必须显式传入 Kubernetes 上下文。最简单的受支持方式是创建一个名为 `incident-lab` 的三节点 kind 集群。
+
+## 前置条件
+
+- Windows PowerShell 7+
+- 运行 Linux 容器的 Docker Desktop
+- `kubectl`
+- `helm`
+- 能访问互联网，以拉取容器镜像以及 metrics-server/KEDA Helm Chart
+
+安装脚本会把固定版本的 `kind.exe` 下载到已被 Git 忽略的 `.tools/` 目录，使用官方发布校验和验证后使用，不会执行全局安装。
+
+## 快速开始
+
+```powershell
+# 构建两个应用 release，创建一次性集群，安装 addons，
+# 部署健康基线并等待所有组件 Ready。
+.\scripts\Start-Lab.ps1 -CreateKindCluster
+
+# 建立明确的健康基线证据门。
+.\scripts\Test-Lab.ps1 -Context kind-incident-lab
+
+# 打开本地 Grafana 和 Prometheus 端口转发。
+.\scripts\Open-Dashboards.ps1 -Context kind-incident-lab
+```
+
+Grafana 地址为 `http://localhost:3000`，可使用匿名查看者权限访问。Prometheus 地址为 `http://localhost:9090`。
+
+如果要使用已有的专用集群，请显式传入它的上下文：
+
+```powershell
+.\scripts\Start-Lab.ps1 -Context my-disposable-context
+```
+
+该集群必须能够访问本地镜像。如果使用远程集群，请先发布等价的 `1.0.0` 和 `2.0.0` 镜像，并更新清单中的镜像引用。
+
+## 运行一次 GameDay
+
+场景构建器（Scenario Builder）和教练（Coach）必须使用不同的 Codex 会话。
+
+### 1. 场景构建器会话
+
+```powershell
+.\scenario-builder\Start-Scenario.ps1 `
+  -Incident INC-01 `
+  -Context kind-incident-lab
+```
+
+场景构建器只会告诉学员场景已经就绪，以及中性描述的事件简报位于哪里。不要向教练分享场景构建器终端或仓库内部实现。
+
+### 2. 学员工作区
+
+```powershell
+.\learner\New-IncidentRoom.ps1 -Incident INC-01
+Get-Content .\incident-room\incident-brief.md
+```
+
+生成的工作区包含：
+
+```text
+incident-room/
+├── incident-brief.md
+├── timeline.md
+├── investigation.md
+└── postmortem.md
+```
+
+你可以使用普通运行时命令，也可以收集范围明确的证据视图：
+
+```powershell
+.\learner\Get-RuntimeEvidence.ps1 `
+  -Context kind-incident-lab `
+  -Area summary
+```
+
+支持的 area 包括 `summary`、`changes`、`service-path`、`capacity`、`queue`、`storage` 和 `dns`。选择调查方向是响应者的判断，并不等于获得答案。
+
+### 3. 全新的教练会话
+
+启动一个新的 Codex 会话，并提供 [learner/COACH-PROMPT.md](learner/COACH-PROMPT.md)。教练只能使用真实响应者能够获取的证据，禁止查看源代码、Git 历史以及 `scenario-builder/`。
+
+### 4. 恢复与证据门
+
+学员应先自行决定并解释缓解方案。演练结束后，场景构建器可以恢复已知健康基线：
+
+```powershell
+.\scenario-builder\Reset-Scenario.ps1 -Context kind-incident-lab
+.\scripts\Test-Lab.ps1 -Context kind-incident-lab
+```
+
+不能仅因为 Pods 显示 Running 就宣布事件已经恢复。必须验证客户请求、延迟/错误信号、受影响的分布式路径，以及适用场景中的队列或状态恢复。
+
+## 训练轮次
+
+| 轮次 | 事件 | 重点 |
+|---|---|---|
+| 1 | INC-01、INC-02、INC-03 | 发布、容量、维护，以及缓解优先的响应方式 |
+| 2 | INC-04、INC-05、INC-06 | 共享故障域、Service 路径和异步系统健康 |
+| 3 | INC-07、INC-08 | 有状态系统、存储和集群网络/DNS |
+
+## 证据模型
+
+必须把以下四道门分开：
+
+1. **健康基线：** 工作负载已就绪，合成客户路径成功，指标可以查询。
+2. **事件复现：** 日常操作或变更发生后，预期症状真实出现。
+3. **学员响应：** 客户影响、严重级别、假设、缓解与恢复决定都有运行时证据支持。
+4. **根因分析/事后复盘：** 恢复之后再完成根因、触发因素、促成因素和纠正措施。
+
+仓库检查通过，只能证明实验室实现的结构有效；它不能证明学员已经理解事件，也不能代替学员对事件作出最终判断。
+
+## 仓库结构
+
+```text
+apps/lab-service/          可复用的同步、异步和有状态实验工作负载
+platform/base/             健康工作负载、流量、HPA 和 PDB
+platform/observability/    Prometheus、症状型告警、Grafana 和 kube-state-metrics
+platform/addons/           metrics-server values 和 KEDA 队列伸缩配置
+learner/                   安全简报、模板、教练契约和运行时辅助脚本
+scenario-builder/          私有注入、恢复脚本和仅限场景构建器的说明
+scripts/                   集群设置、基线验证和仪表盘脚本
+tests/                     仓库静态验证
+```
+
+更详细的组件和隔离模型请参阅 [docs/architecture.md](docs/architecture.md)。
+
+## 仓库验证
+
+```powershell
+.\tests\Validate-Repository.ps1
+```
+
+该脚本检查 Python 语法、PowerShell 解析、Kustomize 渲染、必要的学员文件以及公开文件名是否保持中性。真实集群运行仍然是独立的证据层。
