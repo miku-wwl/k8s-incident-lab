@@ -50,6 +50,12 @@ STORAGE_DURATION = Histogram(
 )
 STORAGE_ERRORS = Counter("lab_storage_errors_total", "Stateful operation errors", ["operation", "reason"])
 LOAD_REQUESTS = Counter("lab_load_requests_total", "Traffic generator requests", ["target", "result"])
+DNS_DURATION = Histogram(
+    "lab_dns_query_duration_seconds",
+    "Observed DNS query duration from synthetic runtime clients",
+    ["result"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2),
+)
 
 
 def env_float(name, default):
@@ -201,6 +207,26 @@ def make_http_app():
                 result["status"] = 503
                 return jsonify(error="storage temporarily unavailable"), 503
 
+    @app.get("/read")
+    def read_records():
+        with measured("read") as result:
+            started = time.monotonic()
+            try:
+                with closing(sqlite_read_connection()) as connection:
+                    row = connection.execute(
+                        "SELECT COUNT(*), MAX(created_at) FROM records"
+                    ).fetchone()
+                STORAGE_DURATION.labels("read").observe(time.monotonic() - started)
+                result["status"] = 200
+                return jsonify(records=row[0], latest_created_at=row[1]), 200
+            except sqlite3.Error as exc:
+                reason = type(exc).__name__
+                STORAGE_DURATION.labels("read").observe(time.monotonic() - started)
+                STORAGE_ERRORS.labels("read", reason).inc()
+                emit("storage_operation_failed", operation="read", error=str(exc))
+                result["status"] = 503
+                return jsonify(error="storage temporarily unavailable"), 503
+
     return app
 
 
@@ -250,6 +276,13 @@ def sqlite_connection(timeout=None):
     return connection
 
 
+def sqlite_read_connection():
+    path = sqlite_path()
+    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=0.35)
+    connection.execute("PRAGMA query_only=ON")
+    return connection
+
+
 def run_worker():
     start_http_server(PORT)
     client = redis_client()
@@ -267,25 +300,6 @@ def run_worker():
             MESSAGES_PROCESSED.labels(socket.gethostname(), "error").inc()
             emit("queue_operation_failed", error=type(exc).__name__)
             time.sleep(1)
-
-
-def run_maintenance():
-    start_http_server(PORT)
-    interval = env_float("MAINTENANCE_INTERVAL_SECONDS", 3600)
-    hold = env_float("MAINTENANCE_HOLD_SECONDS", 0.05)
-    emit("maintenance_started", interval_seconds=interval)
-    while True:
-        time.sleep(interval)
-        try:
-            connection = sqlite_connection(timeout=10)
-            connection.execute("BEGIN EXCLUSIVE")
-            emit("maintenance_cycle_started")
-            time.sleep(hold)
-            connection.commit()
-            connection.close()
-            emit("maintenance_cycle_completed")
-        except sqlite3.Error as exc:
-            emit("maintenance_cycle_failed", error=str(exc))
 
 
 def run_load_generator():
@@ -316,6 +330,7 @@ def run_dns_pressure():
     start_http_server(PORT)
     concurrency = env_int("CONCURRENCY", 4)
     interval = env_float("REQUEST_INTERVAL_SECONDS", 0.02)
+    timeout = env_float("DNS_TIMEOUT_SECONDS", 0.25)
     suffix = os.getenv("DNS_SUFFIX", "incident-lab.svc.cluster.local")
 
     with open("/etc/resolv.conf", encoding="utf-8") as resolv_conf:
@@ -333,9 +348,10 @@ def run_dns_pressure():
 
     def loop():
         client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        client.settimeout(0.1)
+        client.settimeout(timeout)
         while True:
             hostname = f"probe-{uuid.uuid4().hex}.{suffix}"
+            started = time.monotonic()
             try:
                 client.sendto(query_packet(hostname), (nameserver, 53))
                 response, _ = client.recvfrom(512)
@@ -343,6 +359,7 @@ def run_dns_pressure():
             except (TimeoutError, OSError):
                 outcome = "timeout"
             LOAD_REQUESTS.labels("cluster-dns", outcome).inc()
+            DNS_DURATION.labels(outcome).observe(time.monotonic() - started)
             time.sleep(interval)
 
     for index in range(concurrency):
@@ -355,8 +372,6 @@ def main():
     emit("service_starting")
     if ROLE == "worker":
         run_worker()
-    elif ROLE == "maintenance":
-        run_maintenance()
     elif ROLE == "loadgen":
         run_load_generator()
     elif ROLE == "dns-client":

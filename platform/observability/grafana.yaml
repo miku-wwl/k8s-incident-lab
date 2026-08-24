@@ -83,7 +83,10 @@ data:
           "title": "Stateful operation p95 latency",
           "id": 6,
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
-          "targets": [{"expr": "histogram_quantile(0.95, sum by (le, operation) (rate(lab_storage_operation_duration_seconds_bucket[1m])))", "legendFormat": "{{operation}}"}]
+          "targets": [
+            {"expr": "histogram_quantile(0.95, sum by (le, operation) (rate(lab_storage_operation_duration_seconds_bucket[1m])))", "legendFormat": "{{operation}} p95"},
+            {"expr": "sum by (operation) (rate(lab_storage_errors_total[1m]))", "legendFormat": "{{operation}} errors/s"}
+          ]
         },
         {
           "type": "timeseries",
@@ -91,6 +94,16 @@ data:
           "id": 7,
           "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
           "targets": [{"expr": "sum by (target, result) (rate(lab_load_requests_total{target!=\"cluster-dns\",result!~\"2..\"}[1m]))", "legendFormat": "{{target}} {{result}}"}]
+        },
+        {
+          "type": "timeseries",
+          "title": "Shared service-discovery traffic and latency",
+          "id": 8,
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
+          "targets": [
+            {"expr": "sum(rate(coredns_dns_requests_total[1m]))", "legendFormat": "resolver requests/s"},
+            {"expr": "histogram_quantile(0.95, sum by (le) (rate(lab_dns_query_duration_seconds_bucket[1m])))", "legendFormat": "synthetic p95 seconds"}
+          ]
         }
       ],
       "refresh": "5s",

@@ -11,24 +11,80 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $namespace = "incident-lab"
+$stateDirectory = Join-Path $repoRoot ".scenario-state"
+$safeContext = $Context -replace '[^A-Za-z0-9_.-]', '_'
+$statePath = Join-Path $stateDirectory "$safeContext.json"
 
 function Invoke-Kubectl {
-    & kubectl --context $Context @args
+    $output = & kubectl --context $Context @args
     if ($LASTEXITCODE -ne 0) {
         throw "kubectl failed: $($args -join ' ')"
     }
+    return $output
 }
 
-Invoke-Kubectl cluster-info | Out-Null
+function Assert-DisposableLabContext {
+    if ($Context -notlike "kind-*") {
+        throw "Scenario mutation is restricted to a kind context; received '$Context'."
+    }
+    $knownContext = & kubectl config get-contexts $Context -o name 2>$null
+    if ($LASTEXITCODE -ne 0 -or $knownContext -ne $Context) {
+        throw "Kubernetes context '$Context' does not exist."
+    }
+    Invoke-Kubectl cluster-info | Out-Null
+    $labId = Invoke-Kubectl get namespace $namespace `
+        -o jsonpath='{.metadata.labels.training\.example\.com/lab-id}'
+    $disposable = Invoke-Kubectl get namespace $namespace `
+        -o jsonpath='{.metadata.labels.training\.example\.com/disposable}'
+    if ($labId -ne "k8s-incident-lab" -or $disposable -ne "true") {
+        throw "Namespace '$namespace' is not marked as the disposable incident lab."
+    }
+    $nodeJson = (Invoke-Kubectl get nodes -o json) -join "`n"
+    $nodes = ($nodeJson | ConvertFrom-Json).items
+    $controlPlanes = @($nodes | Where-Object {
+        $null -ne $_.metadata.labels.'node-role.kubernetes.io/control-plane'
+    })
+    $workers = @($nodes | Where-Object {
+        $null -eq $_.metadata.labels.'node-role.kubernetes.io/control-plane'
+    })
+    if ($controlPlanes.Count -ne 1 -or $workers.Count -lt 3) {
+        throw "The shared lab topology requires one control-plane and at least three workers."
+    }
+}
+
+Assert-DisposableLabContext
+
 $active = & kubectl --context $Context -n $namespace get configmap scenario-state `
     -o jsonpath='{.data.incident}' 2>$null
 if ($LASTEXITCODE -eq 0 -and $active) {
     throw "Scenario $active is already active. Reset it before starting another incident."
 }
+if (Test-Path -LiteralPath $statePath) {
+    throw "Builder state already exists at '$statePath'. Resolve or reset it before continuing."
+}
+
+$startedAt = [DateTime]::UtcNow.ToString('o')
+$builderState = [ordered]@{
+    incident = $Incident
+    context = $Context
+    startedAt = $startedAt
+}
+
+if ($Incident -eq "INC-08") {
+    $coreDnsRaw = (Invoke-Kubectl -n kube-system get deployment coredns -o json) -join "`n"
+    $coreDns = $coreDnsRaw | ConvertFrom-Json
+    $builderState["coreDns"] = [ordered]@{
+        replicas = $coreDns.spec.replicas
+        resources = $coreDns.spec.template.spec.containers[0].resources
+    }
+}
+
+New-Item -ItemType Directory -Path $stateDirectory -Force | Out-Null
+$builderState | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $statePath -Encoding utf8
 
 & kubectl --context $Context -n $namespace create configmap scenario-state `
     --from-literal="incident=$Incident" `
-    --from-literal="startedAt=$([DateTime]::UtcNow.ToString('o'))" `
+    --from-literal="startedAt=$startedAt" `
     --dry-run=client -o yaml | & kubectl --context $Context apply -f - | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Could not create scenario state." }
 
@@ -48,16 +104,18 @@ switch ($Incident) {
         Invoke-Kubectl -n $namespace rollout status deployment/traffic-gateway --timeout=3m
     }
     "INC-03" {
-        $nodes = (Invoke-Kubectl get nodes -o json | ConvertFrom-Json).items |
-            Where-Object {
-                -not $_.spec.unschedulable -and
-                $null -eq $_.metadata.labels.'node-role.kubernetes.io/control-plane'
-            }
-        if (@($nodes).Count -lt 2) {
-            throw "INC-03 requires at least two schedulable worker nodes. Use -CreateKindCluster."
+        $nodeJson = (Invoke-Kubectl get nodes -o json) -join "`n"
+        $nodes = ($nodeJson | ConvertFrom-Json).items | Where-Object {
+            -not $_.spec.unschedulable -and
+            $null -eq $_.metadata.labels.'node-role.kubernetes.io/control-plane'
         }
-        $target = @($nodes)[0].metadata.name
-        Invoke-Kubectl label node $target training.example.com/tier=primary --overwrite
+        if (@($nodes).Count -lt 3) {
+            throw "INC-03 requires three schedulable worker nodes. Recreate the provided kind cluster."
+        }
+        $target = @($nodes | Where-Object {
+            $_.metadata.labels.'training.example.com/tier' -eq 'primary'
+        })[0].metadata.name
+        if (-not $target) { throw "The primary maintenance target was not found." }
         $placementPatch = '{"spec":{"template":{"spec":{"nodeSelector":{"training.example.com/tier":"primary"}}}}}'
         $budgetPatch = '{"spec":{"minAvailable":0}}'
         Invoke-Kubectl -n $namespace patch deployment gateway --type merge --patch $placementPatch
@@ -77,10 +135,10 @@ switch ($Incident) {
         Invoke-Kubectl -n $namespace rollout status deployment/traffic-shared --timeout=3m
     }
     "INC-05" {
-        $servicePatch = '{"spec":{"selector":{"app.kubernetes.io/name":"gateway","app.kubernetes.io/role":"candidate"}}}'
-        Invoke-Kubectl -n $namespace patch service gateway --type merge --patch $servicePatch
-        Invoke-Kubectl -n $namespace annotate service/gateway `
-            training.example.com/change="routing update" --overwrite
+        Invoke-Kubectl apply -f (Join-Path $PSScriptRoot "change-505.yaml")
+        Invoke-Kubectl -n $namespace annotate deployment/gateway-rollout `
+            kubernetes.io/change-cause="Progressive delivery 1.1.0" --overwrite
+        Invoke-Kubectl -n $namespace rollout status deployment/gateway-rollout --timeout=3m
     }
     "INC-06" {
         if (-not (& kubectl --context $Context get crd scaledobjects.keda.sh --ignore-not-found -o name)) {
@@ -95,41 +153,18 @@ switch ($Incident) {
         Invoke-Kubectl -n $namespace rollout status deployment/traffic-orders --timeout=3m
     }
     "INC-07" {
-        Invoke-Kubectl -n $namespace set env statefulset/storage --containers=maintenance `
-            MAINTENANCE_INTERVAL_SECONDS=0.2 MAINTENANCE_HOLD_SECONDS=2.5
-        Invoke-Kubectl -n $namespace annotate statefulset/storage `
-            kubernetes.io/change-cause="Scheduled data maintenance" --overwrite
-        Invoke-Kubectl -n $namespace rollout status statefulset/storage --timeout=3m
+        Invoke-Kubectl -n $namespace delete job storage-maintenance storage-recovery --ignore-not-found
+        Invoke-Kubectl apply -f (Join-Path $PSScriptRoot "change-707.yaml")
+        Invoke-Kubectl -n $namespace wait --for=condition=Complete job/storage-maintenance --timeout=2m
     }
     "INC-08" {
-        $coreDns = & kubectl --context $Context -n kube-system get deployment coredns -o name 2>$null
-        if (-not $coreDns) { throw "INC-08 requires kube-system deployment/coredns." }
-        $dnsRuleBlock = @'
-    template IN A incident-lab.svc.cluster.local {
-        rcode SERVFAIL
-    }
-    template IN AAAA incident-lab.svc.cluster.local {
-        rcode SERVFAIL
-    }
-'@ + "`n"
-        $config = (Invoke-Kubectl -n kube-system get configmap coredns -o json | ConvertFrom-Json)
-        $corefile = $config.data.Corefile
-        if ($corefile.Contains($dnsRuleBlock)) { throw "Scenario DNS rules are already present." }
-        $updatedCorefile = [regex]::Replace(
-            $corefile,
-            '(?m)^(\s*ready\s*\r?\n)',
-            { param($match) $match.Value + $dnsRuleBlock },
-            1
-        )
-        if ($updatedCorefile -eq $corefile) { throw "CoreDNS ready directive was not found." }
-        $configPatch = @{ data = @{ Corefile = $updatedCorefile } } | ConvertTo-Json -Compress
-        Invoke-Kubectl -n kube-system patch configmap coredns --type merge --patch $configPatch
-        Invoke-Kubectl -n kube-system annotate configmap/coredns `
-            training.example.com/change="resolver configuration update" --overwrite
-        Invoke-Kubectl -n kube-system rollout restart deployment/coredns
+        Invoke-Kubectl -n kube-system set resources deployment/coredns -c coredns `
+            "--requests=cpu=75m,memory=70Mi" "--limits=cpu=200m,memory=170Mi"
+        Invoke-Kubectl -n kube-system annotate deployment/coredns `
+            training.example.com/change="Resolver capacity rollout" --overwrite
         Invoke-Kubectl -n kube-system rollout status deployment/coredns --timeout=3m
         Invoke-Kubectl apply -f (Join-Path $PSScriptRoot "change-818.yaml")
-        Invoke-Kubectl -n $namespace rollout status deployment/dns-client --timeout=3m
+        Invoke-Kubectl -n $namespace rollout status deployment/discovery-probe --timeout=3m
     }
 }
 

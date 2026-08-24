@@ -4,3 +4,5 @@ metadata:
   name: incident-lab
   labels:
     app.kubernetes.io/part-of: k8s-incident-lab
+    training.example.com/lab-id: k8s-incident-lab
+    training.example.com/disposable: "true"

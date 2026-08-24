@@ -167,6 +167,13 @@ spec:
         prometheus.io/port: "8080"
         prometheus.io/path: /metrics
     spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
       containers:
         - name: app
           image: k8s-incident-lab/service:1.0.0
@@ -430,6 +437,9 @@ spec:
         prometheus.io/port: "8080"
         prometheus.io/path: /metrics
     spec:
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: app
           image: k8s-incident-lab/service:1.0.0
@@ -463,33 +473,6 @@ spec:
             limits:
               cpu: 500m
               memory: 192Mi
-          volumeMounts:
-            - name: data
-              mountPath: /data
-        - name: maintenance
-          image: k8s-incident-lab/service:1.0.0
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: SERVICE_ROLE
-              value: maintenance
-            - name: PORT
-              value: "9091"
-            - name: SQLITE_PATH
-              value: /data/lab.db
-            - name: MAINTENANCE_INTERVAL_SECONDS
-              value: "3600"
-            - name: MAINTENANCE_HOLD_SECONDS
-              value: "0.05"
-          ports:
-            - name: maint-metrics
-              containerPort: 9091
-          resources:
-            requests:
-              cpu: 10m
-              memory: 32Mi
-            limits:
-              cpu: 200m
-              memory: 128Mi
           volumeMounts:
             - name: data
               mountPath: /data

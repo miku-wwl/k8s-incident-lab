@@ -10,9 +10,9 @@
 
 ## 安全边界
 
-请只使用一次性的专用集群。`INC-03` 会排空一个工作节点，`INC-08` 会临时修改 CoreDNS 配置。绝对不要针对共享集群或生产环境运行场景构建器命令。
+请只使用一次性的专用 kind 集群。部分场景会执行节点维护、存储维护或集群级服务发现压力操作。绝对不要针对共享集群或生产环境运行场景构建器命令。
 
-所有会修改集群的脚本都必须显式传入 Kubernetes 上下文。最简单的受支持方式是创建一个名为 `incident-lab` 的三节点 kind 集群。
+所有会修改集群的脚本都必须显式传入 Kubernetes 上下文，并验证目标是带实验室标记的 kind 集群。受支持的共享拓扑是一个控制平面节点加三个工作节点。
 
 ## 前置条件
 
@@ -27,7 +27,7 @@
 ## 快速开始
 
 ```powershell
-# 构建两个应用 release，创建一次性集群，安装 addons，
+# 构建实验所需应用版本，创建一次性集群，安装 addons，
 # 部署健康基线并等待所有组件 Ready。
 .\scripts\Start-Lab.ps1 -CreateKindCluster
 
@@ -46,7 +46,7 @@ Grafana 地址为 `http://localhost:3000`，可使用匿名查看者权限访问
 .\scripts\Start-Lab.ps1 -Context my-disposable-context
 ```
 
-该集群必须能够访问本地镜像。如果使用远程集群，请先发布等价的 `1.0.0` 和 `2.0.0` 镜像，并更新清单中的镜像引用。
+本实验室只支持 kind。自定义 kind 集群必须采用相同的四节点拓扑，并能够访问实验所需镜像。
 
 ## 运行一次 GameDay
 
@@ -62,27 +62,31 @@ Grafana 地址为 `http://localhost:3000`，可使用匿名查看者权限访问
 
 场景构建器只会告诉学员场景已经就绪，以及中性描述的事件简报位于哪里。不要向教练分享场景构建器终端或仓库内部实现。
 
-### 2. 学员工作区
+### 2. 生成仓库外学员安全包
 
 ```powershell
-.\learner\New-IncidentRoom.ps1 -Incident INC-01
-Get-Content .\incident-room\incident-brief.md
+.\scenario-builder\New-LearnerBundle.ps1 `
+  -Incident INC-01 `
+  -OutputPath C:\gameday\INC-01
 ```
 
-生成的工作区包含：
+完整 Git checkout 属于 Owner 控制面，不能交给学员或教练。生成的安全包只包含：
 
 ```text
-incident-room/
+C:\gameday\INC-01\
 ├── incident-brief.md
 ├── timeline.md
 ├── investigation.md
-└── postmortem.md
+├── postmortem.md
+├── Get-RuntimeEvidence.ps1
+├── COACH-PROMPT.md
+└── scorecard.md
 ```
 
 你可以使用普通运行时命令，也可以收集范围明确的证据视图：
 
 ```powershell
-.\learner\Get-RuntimeEvidence.ps1 `
+& C:\gameday\INC-01\Get-RuntimeEvidence.ps1 `
   -Context kind-incident-lab `
   -Area summary
 ```
@@ -91,9 +95,9 @@ incident-room/
 
 ### 3. 全新的教练会话
 
-启动一个新的 Codex 会话，并提供 [learner/COACH-PROMPT.md](learner/COACH-PROMPT.md)。教练只能使用真实响应者能够获取的证据，禁止查看源代码、Git 历史以及 `scenario-builder/`。
+启动一个新的 Codex 会话，并提供安全包中的 `COACH-PROMPT.md`。教练只能使用真实响应者能够获取的证据，禁止访问完整仓库、源码、Git 历史、场景构建器和 Evaluator 材料。
 
-### 4. 恢复与证据门
+### 4. 恢复、提交 RCA 与证据门
 
 学员应先自行决定并解释缓解方案。演练结束后，场景构建器可以恢复已知健康基线：
 
@@ -103,6 +107,19 @@ incident-room/
 ```
 
 不能仅因为 Pods 显示 Running 就宣布事件已经恢复。必须验证客户请求、延迟/错误信号、受影响的分布式路径，以及适用场景中的队列或状态恢复。
+
+学员提交填写完成的 `postmortem.md` 后，Owner 必须先重置场景并通过健康基线验证，才能生成仓库外 Evaluator 包：
+
+```powershell
+.\evaluator\New-EvaluationPackage.ps1 `
+  -Incident INC-01 `
+  -Context kind-incident-lab `
+  -SubmissionPath C:\gameday\INC-01\postmortem.md `
+  -OutputPath C:\gameday-evaluation\INC-01 `
+  -InvestigationClosed
+```
+
+Ground Truth 只会出现在调查关闭后的 Evaluator 包中，不会进入学员安全包或教练会话。
 
 ## 训练轮次
 
@@ -114,12 +131,13 @@ incident-room/
 
 ## 证据模型
 
-必须把以下四道门分开：
+必须把以下五道门分开：
 
 1. **健康基线：** 工作负载已就绪，合成客户路径成功，指标可以查询。
 2. **事件复现：** 日常操作或变更发生后，预期症状真实出现。
 3. **学员响应：** 客户影响、严重级别、假设、缓解与恢复决定都有运行时证据支持。
 4. **根因分析/事后复盘：** 恢复之后再完成根因、触发因素、促成因素和纠正措施。
+5. **Evaluator：** 只有调查关闭并完成恢复验证后，才揭示 Ground Truth，并按 100 分评分卡评价事件纪律。
 
 仓库检查通过，只能证明实验室实现的结构有效；它不能证明学员已经理解事件，也不能代替学员对事件作出最终判断。
 
@@ -132,6 +150,7 @@ platform/observability/    Prometheus、症状型告警、Grafana 和 kube-state
 platform/addons/           metrics-server values 和 KEDA 队列伸缩配置
 learner/                   安全简报、模板、教练契约和运行时辅助脚本
 scenario-builder/          私有注入、恢复脚本和仅限场景构建器的说明
+evaluator/                 Owner 私有 Ground Truth、评估打包和评分工作表
 scripts/                   集群设置、基线验证和仪表盘脚本
 tests/                     仓库静态验证
 ```
@@ -144,4 +163,4 @@ tests/                     仓库静态验证
 .\tests\Validate-Repository.ps1
 ```
 
-该脚本检查 Python 语法、PowerShell 解析、Kustomize 渲染、必要的学员文件以及公开文件名是否保持中性。真实集群运行仍然是独立的证据层。
+该脚本检查 Python 语法、PowerShell 解析、Kustomize/场景清单、四节点拓扑、评分卡总分、Evaluator 完整性、敏感信息以及学员可见内容的剧透边界。真实集群运行仍然是独立的证据层。

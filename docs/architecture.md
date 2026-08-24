@@ -10,8 +10,8 @@ traffic-orders  -----------> orders  -> identity
                                   v
                                 Redis <- worker replicas（KEDA）
 
-traffic-storage -----------> storage StatefulSet -> SQLite PVC
-                                      + maintenance sidecar
+traffic-storage -----------> storage StatefulSet -> SQLite on PVC
+traffic-storage-read ------> storage read path ----> same PVC
 
 Prometheus <- 带抓取注解的应用/流量 Pods + kube-state-metrics
 Grafana    <- Prometheus
@@ -21,14 +21,15 @@ Grafana    <- Prometheus
 
 ## 隔离边界
 
-仓库分成两个信任区域：
+仓库和分发产物分成三个信任区域：
 
 | 区域 | 材料 | 谁可以查看？ |
 |---|---|---|
-| 学员安全区 | `learner/`、Kubernetes 运行时状态、日志、指标、事件、发布历史 | 学员和教练 |
-| 场景构建器私有区 | `scenario-builder/`、应用源代码、仓库历史/差异 | 仅场景构建器 |
+| 学员安全区 | `New-LearnerBundle.ps1` 生成的仓库外安全包、Kubernetes 运行时状态、日志、指标、事件、发布历史 | 学员和教练 |
+| Owner 控制面 | 完整 Git checkout、`scenario-builder/`、应用源代码、仓库历史/差异 | 仅场景构建器/Owner |
+| Evaluator 私有区 | `evaluator/rubrics/` 和调查关闭后生成的仓库外评估包 | 仅 Owner 和 Evaluator |
 
-教练必须运行在全新的会话中，因为提示词指令无法清除另一个会话已经看过的上下文。已经看到注入变更的教练无法再提供无剧透的调查指导。
+教练必须运行在全新的会话中，因为提示词指令无法清除另一个会话已经看过的上下文。学员和教练都不能获得完整 checkout；这样可以在文件分发层面阻断源代码、Builder 脚本和 Ground Truth，而不只是依赖行为约定。
 
 ## 场景生命周期不变量
 
@@ -42,9 +43,12 @@ Grafana    <- Prometheus
   -> 学员作出缓解决定
   -> 场景构建器重置
   -> 独立基线验证
+  -> 学员提交 RCA
+  -> 生成仓库外 Evaluator 包
+  -> Ground Truth 对照和评分
 ```
 
-实验命名空间中的 `scenario-state` 用于阻止多个注入同时运行。它只包含事件 ID 和开始时间，不包含故障机制。
+实验命名空间中的 `scenario-state` 用于阻止多个注入同时运行。它只包含事件 ID 和开始时间，不包含故障机制。恢复所需的私有原始状态保存在 Builder 本地且被 Git 忽略的 `.scenario-state/` 中，不会进入学员安全包。
 
 ## 可观测性范围
 
@@ -54,10 +58,10 @@ Kubernetes 事件和发布历史是操作变更的权威运行时证据。应用
 
 ## 本地集群假设
 
-- 节点维护场景需要三个节点：一个控制平面节点和两个可调度工作节点。
+- 共享拓扑固定为四个节点：一个控制平面节点和三个可调度工作节点。
 - Redis 和 SQLite PVC 需要默认的动态 StorageClass。
 - 队列伸缩场景需要 KEDA。
 - `kubectl top` 和 CPU HPA 需要 metrics-server。
-- INC-08 要求 CoreDNS 由 `kube-system/deployment/coredns` 管理。
+- DNS/网络场景要求 CoreDNS 由 `kube-system/deployment/coredns` 管理并暴露运行时指标。
 
 提供的 kind 路径满足节点拓扑要求。设置脚本会验证工作负载就绪状态；如果缺少 StorageClass 或附加组件，设置过程会明确失败，不会悄悄启动一个损坏的基线。

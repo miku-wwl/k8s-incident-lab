@@ -34,15 +34,31 @@ if (-not $Context) {
 & kubectl --context $Context cluster-info | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Kubernetes context '$Context' is not reachable." }
 
+if ($Context -notlike "kind-*") {
+    throw "This lab is restricted to disposable kind contexts; received '$Context'."
+}
+$nodeJson = (& kubectl --context $Context get nodes -o json) -join "`n"
+if ($LASTEXITCODE -ne 0) { throw "Could not inspect kind cluster topology." }
+$nodes = ($nodeJson | ConvertFrom-Json).items
+$controlPlaneCount = @($nodes | Where-Object {
+    $null -ne $_.metadata.labels.'node-role.kubernetes.io/control-plane'
+}).Count
+$workerCount = @($nodes | Where-Object {
+    $null -eq $_.metadata.labels.'node-role.kubernetes.io/control-plane'
+}).Count
+if ($controlPlaneCount -ne 1 -or $workerCount -ne 3) {
+    throw "Expected one control-plane and three workers; found $controlPlaneCount control-plane and $workerCount workers. Recreate the disposable kind cluster."
+}
+
 if (-not $SkipBuild) {
-    foreach ($release in @("1.0.0", "2.0.0")) {
+    foreach ($release in @("1.0.0", "1.1.0", "2.0.0")) {
         & docker build --build-arg "APP_RELEASE=$release" --tag "k8s-incident-lab/service:$release" (Join-Path $repoRoot "apps\lab-service")
         if ($LASTEXITCODE -ne 0) { throw "Image build failed for release $release." }
     }
 
     if ($Context -eq "kind-$clusterName") {
         $kindPath = Join-Path $repoRoot ".tools\kind.exe"
-        foreach ($release in @("1.0.0", "2.0.0")) {
+        foreach ($release in @("1.0.0", "1.1.0", "2.0.0")) {
             & $kindPath load docker-image "k8s-incident-lab/service:$release" --name $clusterName
             if ($LASTEXITCODE -ne 0) { throw "Loading release $release into kind failed." }
         }

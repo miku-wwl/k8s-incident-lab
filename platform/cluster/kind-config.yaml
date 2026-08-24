@@ -8,3 +8,6 @@ nodes:
   - role: worker
     labels:
       training.example.com/tier: secondary
+  - role: worker
+    labels:
+      training.example.com/tier: tertiary

@@ -138,6 +138,13 @@ data:
               severity: page
             annotations:
               summary: Stateful operations are slower than the service objective
+          - alert: StatefulOperationFailures
+            expr: sum(rate(lab_storage_errors_total[1m])) > 0.1
+            for: 30s
+            labels:
+              severity: page
+            annotations:
+              summary: Stateful operations are failing above the service threshold
 ---
 apiVersion: apps/v1
 kind: Deployment
