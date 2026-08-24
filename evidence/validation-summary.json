@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-24T14:34:21.8462590Z",
+  "generated_at": "2026-08-24T23:57:21.4285838Z",
   "validation_mode": "FullMatrix",
   "overall_status": "PASS",
   "repository": {
     "branch": "main",
-    "commit": "ffa336371509abbab0b9c76ce60ab5921cb320dd",
-    "working_tree_dirty": true
+    "commit": "62fe564dd45e6f5a307cd6bf22822467d264b1b1",
+    "working_tree_dirty": false
   },
   "environment": {
     "kind_version": "v0.32.0",
