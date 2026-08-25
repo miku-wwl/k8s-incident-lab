@@ -1,12 +1,12 @@
 {
   "schema_version": 2,
-  "generated_at": "2026-08-25T03:06:56.3676085Z",
+  "generated_at": "2026-08-25T03:38:32.0988644Z",
   "validation_mode": "FullMatrix",
   "overall_status": "PASS",
   "repository": {
     "branch": "main",
-    "commit": "cb67d6685c61a7da71df82cca7a0b5ff16c751d6",
-    "working_tree_dirty": true
+    "commit": "c5b50c5e2a3f3688b85648b37e3c40970544c059",
+    "working_tree_dirty": false
   },
   "environment": {
     "kind_version": "v0.32.0",
@@ -65,7 +65,7 @@
       "reset": "PASS",
       "recovery": "PASS",
       "warmup_seconds": 30,
-      "duration_seconds": 128.58
+      "duration_seconds": 128.13
     },
     "INC-02": {
       "pre_activation_baseline": "PASS",
@@ -75,7 +75,7 @@
       "reset": "PASS",
       "recovery": "PASS",
       "warmup_seconds": 30,
-      "duration_seconds": 127.59
+      "duration_seconds": 123.78
     },
     "INC-03": {
       "pre_activation_baseline": "PASS",
@@ -85,7 +85,7 @@
       "reset": "PASS",
       "recovery": "PASS",
       "warmup_seconds": 30,
-      "duration_seconds": 124.05
+      "duration_seconds": 143.01
     },
     "INC-04": {
       "pre_activation_baseline": "PASS",
@@ -95,7 +95,7 @@
       "reset": "PASS",
       "recovery": "PASS",
       "warmup_seconds": 30,
-      "duration_seconds": 126.24
+      "duration_seconds": 121.24
     },
     "INC-05": {
       "pre_activation_baseline": "PASS",
@@ -105,7 +105,7 @@
       "reset": "PASS",
       "recovery": "PASS",
       "warmup_seconds": 30,
-      "duration_seconds": 116.01
+      "duration_seconds": 114.26
     },
     "INC-06": {
       "pre_activation_baseline": "PASS",
@@ -115,7 +115,7 @@
       "reset": "PASS",
       "recovery": "PASS",
       "warmup_seconds": 30,
-      "duration_seconds": 109.76
+      "duration_seconds": 105.23
     },
     "INC-07": {
       "pre_activation_baseline": "PASS",
@@ -125,7 +125,7 @@
       "reset": "PASS",
       "recovery": "PASS",
       "warmup_seconds": 30,
-      "duration_seconds": 138.46
+      "duration_seconds": 134.59
     },
     "INC-08": {
       "pre_activation_baseline": "PASS",
@@ -135,7 +135,7 @@
       "reset": "PASS",
       "recovery": "PASS",
       "warmup_seconds": 60,
-      "duration_seconds": 195.25
+      "duration_seconds": 180.06
     }
   },
   "final_recovery": {
