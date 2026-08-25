@@ -23,10 +23,11 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "Docker is required for the isolated Coach boundary."
 }
 
-& docker image inspect $Image *> $null
-if ($LASTEXITCODE -ne 0) {
-    & docker build --tag $Image (Join-Path $repoRoot "platform\coach")
-    if ($LASTEXITCODE -ne 0) { throw "The isolated Coach image could not be built." }
+& docker build --tag $Image (Join-Path $repoRoot "platform\coach")
+if ($LASTEXITCODE -ne 0) { throw "The isolated Coach image could not be built." }
+$imageId = ((& docker image inspect --format '{{.Id}}' $Image) -join "").Trim()
+if ($LASTEXITCODE -ne 0 -or $imageId -notmatch '^sha256:[0-9a-f]{64}$') {
+    throw "The immutable Coach image ID could not be resolved."
 }
 
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) `
@@ -40,7 +41,7 @@ try {
     $arguments = @(& (Join-Path $PSScriptRoot "Get-CoachDockerArguments.ps1") `
         -BundlePath $bundleFull `
         -KubeconfigPath $kubeconfigPath `
-        -Image $Image `
+        -Image $imageId `
         -ContainerCommand $ContainerCommand `
         -Interactive:$Interactive `
         -AutoRemove)

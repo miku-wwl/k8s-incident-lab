@@ -43,7 +43,7 @@ $arguments += @(
     "--workdir", "/workspace",
     "--env", "HOME=/tmp",
     "--env", "KUBECONFIG=/run/learner/kubeconfig",
-    "--mount", "type=bind,source=$bundleFull,target=/workspace",
+    "--mount", "type=bind,source=$bundleFull,target=/workspace,readonly",
     "--mount", "type=bind,source=$kubeconfigFull,target=/run/learner/kubeconfig,readonly",
     $Image
 )

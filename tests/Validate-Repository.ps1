@@ -252,6 +252,15 @@ foreach ($requiredBoundary in @("--read-only", "--cap-drop", "no-new-privileges"
         Add-Failure "Coach launcher is missing process boundary: $requiredBoundary"
     }
 }
+if ($coachLauncher -notmatch [regex]::Escape('target=/workspace,readonly')) {
+    Add-Failure "Coach learner workspace bind mount is not explicitly read-only."
+}
+$coachStart = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts\Start-CoachSandbox.ps1")
+foreach ($freshImagePattern in @('docker build', '{{.Id}}', '-Image $imageId')) {
+    if ($coachStart -notmatch [regex]::Escape($freshImagePattern)) {
+        Add-Failure "Coach launcher does not rebuild and run the current immutable image ID: $freshImagePattern"
+    }
+}
 
 $bundleTestRoot = Join-Path ([IO.Path]::GetTempPath()) `
     ("k8s-incident-lab-bundle-test-{0}" -f [guid]::NewGuid().ToString("N"))

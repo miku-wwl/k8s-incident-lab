@@ -8,6 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$versions = Import-PowerShellDataFile (Join-Path $repoRoot "scripts\LabVersions.psd1")
 $ownerFull = [IO.Path]::GetFullPath($repoRoot).TrimEnd([IO.Path]::DirectorySeparatorChar)
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) `
     ("k8s-incident-lab-process-isolation-{0}" -f [guid]::NewGuid().ToString("N"))
@@ -31,11 +32,14 @@ try {
         -BundlePath $bundlePath -OwnerRepositoryRoot $repoRoot | Out-Null
     Write-Output "PASS bundle_isolation"
 
-    & docker image inspect $Image *> $null
-    if ($LASTEXITCODE -ne 0) {
-        Invoke-DockerChecked @("build", "--tag", $Image, (Join-Path $repoRoot "platform\coach")) `
-            "The isolated Coach image could not be built." | Out-Null
+    Invoke-DockerChecked @("build", "--tag", $Image, (Join-Path $repoRoot "platform\coach")) `
+        "The isolated Coach image could not be built." | Out-Null
+    $imageId = ((Invoke-DockerChecked @("image", "inspect", "--format", "{{.Id}}", $Image) `
+        "The immutable Coach image ID could not be resolved.") -join "").Trim()
+    if ($imageId -notmatch '^sha256:[0-9a-f]{64}$') {
+        throw "The Coach image ID is not an immutable SHA-256 identity."
     }
+    Write-Output "coach_image_id = $imageId"
 
     $null = & (Join-Path $repoRoot "scripts\New-LearnerKubeconfig.ps1") `
         -Context $Context -OutputPath $kubeconfigPath -DurationMinutes 30
@@ -43,7 +47,7 @@ try {
     $runArguments = @(& (Join-Path $repoRoot "scripts\Get-CoachDockerArguments.ps1") `
         -BundlePath $bundlePath `
         -KubeconfigPath $kubeconfigPath `
-        -Image $Image `
+        -Image $imageId `
         -ContainerCommand @("pwsh", "-NoLogo", "-NoProfile", "-Command", "Start-Sleep -Seconds 300") `
         -ContainerName $containerName `
         -Detach)
@@ -52,6 +56,9 @@ try {
 
     $inspect = ((Invoke-DockerChecked @("inspect", $containerName) `
         "The isolated Coach test process could not be inspected.") -join "`n" | ConvertFrom-Json)[0]
+    if ([string]$inspect.Image -ne $imageId) {
+        throw "Coach process did not start from the freshly built immutable image ID."
+    }
     $bindMounts = @($inspect.Mounts | Where-Object { $_.Type -eq "bind" })
     if ($bindMounts.Count -ne 2) { throw "Coach process must have exactly two bind mounts." }
     foreach ($mount in $bindMounts) {
@@ -64,6 +71,15 @@ try {
     if (@($bindMounts.Destination | Sort-Object) -join ',' -ne '/run/learner/kubeconfig,/workspace') {
         throw "Coach process bind mounts differ from the workspace/kubeconfig allowlist."
     }
+    foreach ($destination in @('/workspace', '/run/learner/kubeconfig')) {
+        $mount = @($bindMounts | Where-Object { $_.Destination -eq $destination })[0]
+        if (-not $mount -or $mount.RW) {
+            throw "Coach bind mount '$destination' is not read-only."
+        }
+    }
+    if (@($inspect.Mounts | Where-Object { $_.Destination -eq '/var/run/docker.sock' }).Count -ne 0) {
+        throw "Docker socket is mounted inside the Coach process."
+    }
     if (-not $inspect.HostConfig.ReadonlyRootfs -or
         $inspect.HostConfig.CapDrop -notcontains "ALL" -or
         @($inspect.HostConfig.SecurityOpt | Where-Object { $_ -like "no-new-privileges*" }).Count -ne 1 -or
@@ -71,6 +87,11 @@ try {
         $inspect.Config.User -ne "10001:10001") {
         throw "Coach process hardening settings are incomplete."
     }
+    Write-Output "PASS immutable_image_identity"
+    Write-Output "PASS non_root_uid_configured"
+    Write-Output "PASS root_filesystem_readonly"
+    Write-Output "PASS workspace_mount_readonly"
+    Write-Output "PASS kubeconfig_mount_readonly"
     Write-Output "PASS owner_repository_root_inaccessible"
 
     $readCommand = @(
@@ -80,6 +101,50 @@ try {
     Invoke-DockerChecked $readCommand "Learner brief or runbook was not readable." | Out-Null
     Write-Output "PASS learner_brief_readable"
     Write-Output "PASS learner_runbook_readable"
+
+    $workspaceWriteCommand = @(
+        "exec", $containerName, "pwsh", "-NoLogo", "-NoProfile", "-Command",
+        "`$path='/workspace/should-not-write'; try { [IO.File]::WriteAllText(`$path,'denied'); exit 21 } catch { if (Test-Path -LiteralPath `$path) { exit 22 }; exit 0 }"
+    )
+    Invoke-DockerChecked $workspaceWriteCommand "Learner Bundle write was not denied." | Out-Null
+    Write-Output "PASS workspace_write_denied"
+
+    $kubeconfigWriteCommand = @(
+        "exec", $containerName, "pwsh", "-NoLogo", "-NoProfile", "-Command",
+        "`$path='/run/learner/kubeconfig'; try { [IO.File]::AppendAllText(`$path,'denied'); exit 23 } catch { exit 0 }"
+    )
+    Invoke-DockerChecked $kubeconfigWriteCommand "Sanitized kubeconfig write was not denied." | Out-Null
+    Write-Output "PASS kubeconfig_write_denied"
+
+    $temporaryWriteCommand = @(
+        "exec", $containerName, "pwsh", "-NoLogo", "-NoProfile", "-Command",
+        "`$path='/tmp/coach-write-test'; [IO.File]::WriteAllText(`$path,'allowed'); if ([IO.File]::ReadAllText(`$path) -ne 'allowed') { exit 24 }; Remove-Item -LiteralPath `$path"
+    )
+    Invoke-DockerChecked $temporaryWriteCommand "Coach /tmp was not writable." | Out-Null
+    Write-Output "PASS tmp_writable"
+
+    $dockerSocketCommand = @(
+        "exec", $containerName, "pwsh", "-NoLogo", "-NoProfile", "-Command",
+        "if (Test-Path -LiteralPath '/var/run/docker.sock') { exit 25 }"
+    )
+    Invoke-DockerChecked $dockerSocketCommand "Docker socket is accessible inside the Coach boundary." | Out-Null
+    Write-Output "PASS docker_socket_absent"
+
+    $kubectlVersionCommand = @(
+        "exec", $containerName, "kubectl", "version", "--client", "-o", "json"
+    )
+    $kubectlVersionRaw = (Invoke-DockerChecked $kubectlVersionCommand `
+        "kubectl client version could not be inspected inside the Coach boundary.") -join "`n"
+    $kubectlVersion = ($kubectlVersionRaw | ConvertFrom-Json).clientVersion.gitVersion
+    if ($kubectlVersion -ne $versions.Kubectl) {
+        throw "Coach kubectl is $kubectlVersion; expected $($versions.Kubectl)."
+    }
+    Write-Output "PASS kubectl_client_version=$kubectlVersion"
+
+    $runtimeUid = ((Invoke-DockerChecked @("exec", $containerName, "id", "-u") `
+        "Coach runtime UID could not be inspected.") -join "").Trim()
+    if ($runtimeUid -ne "10001") { throw "Coach runtime UID is $runtimeUid, not 10001." }
+    Write-Output "PASS non_root_uid=$runtimeUid"
 
     Invoke-DockerChecked @("exec", $containerName, "kubectl", "--context", $Context, "-n", "incident-lab", "get", "pods", "-o", "name") `
         "kubectl get pods failed inside the Coach boundary." | Out-Null
