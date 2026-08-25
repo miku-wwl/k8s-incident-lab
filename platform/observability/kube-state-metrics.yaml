@@ -69,7 +69,7 @@ spec:
       serviceAccountName: kube-state-metrics
       containers:
         - name: kube-state-metrics
-          image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.15.0
+          image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.15.0@sha256:db384bf43222b066c378e77027a675d4cd9911107adba46c2922b3a55e10d6fb
           args:
             - --namespaces=incident-lab
             - --resources=pods,deployments,statefulsets,replicasets,persistentvolumeclaims,horizontalpodautoscalers,poddisruptionbudgets

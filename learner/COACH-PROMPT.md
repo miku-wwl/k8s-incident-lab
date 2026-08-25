@@ -2,7 +2,7 @@
 
 请为辅导阶段启动一个全新的 Codex 会话，不要复用场景构建器会话。
 
-启动前必须确认当前工作目录就是 Owner 生成的仓库外学员包。不得从 Owner 仓库 checkout 启动 Coach；如果当前目录能够看到 `apps/`、`scenario-builder/`、`evaluator/` 或 `.git/`，立即停止并要求 Owner 从正确的学员目录重新启动。
+启动前必须确认 Coach 进程位于 Owner 提供的隔离容器边界中，当前工作目录为 `/workspace`。仅在宿主机切换到学员目录并不能形成 OS 文件系统隔离。如果当前进程能够看到 Owner 仓库、`apps/`、`scenario-builder/`、`evaluator/` 或 `.git/`，立即停止并要求 Owner 使用 `Start-CoachSandbox.ps1` 重新启动。
 
 把下面这段内容作为系统级工作契约：
 

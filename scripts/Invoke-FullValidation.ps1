@@ -21,6 +21,7 @@ $versions = Import-PowerShellDataFile (Join-Path $PSScriptRoot "LabVersions.psd1
 $scenarioIds = @("INC-01", "INC-02", "INC-03", "INC-04", "INC-05", "INC-06", "INC-07", "INC-08")
 $currentIncident = $null
 $currentStep = "initialization"
+$scenarioStopwatch = $null
 
 if ($Mode -eq "SingleScenario" -and -not $Incident) {
     throw "-Incident is required when -Mode SingleScenario is used."
@@ -61,7 +62,42 @@ function Get-DeploymentImageVersion([string]$Namespace, [string]$Deployment) {
     if ($LASTEXITCODE -ne 0 -or -not $image) {
         throw "Could not determine image version for $Namespace/$Deployment."
     }
-    return ($image -split ':')[-1]
+    $taggedReference = ($image -split '@')[0]
+    return ($taggedReference -split ':')[-1]
+}
+
+function Get-WorkloadImage([string]$Namespace, [string]$Resource) {
+    $image = & kubectl --context $Context -n $Namespace get $Resource `
+        -o jsonpath='{.spec.template.spec.containers[0].image}'
+    if ($LASTEXITCODE -ne 0 -or -not $image) {
+        throw "Could not determine runtime image for $Namespace/$Resource."
+    }
+    return [string]$image
+}
+
+function Get-ExecutionEnvironment {
+    $computerSystem = Get-CimInstance Win32_ComputerSystem
+    $dockerInfoRaw = (& docker info --format '{{json .}}') -join "`n"
+    $dockerVersionRaw = (& docker version --format '{{json .Server}}') -join "`n"
+    if ($LASTEXITCODE -ne 0 -or -not $dockerInfoRaw -or -not $dockerVersionRaw) {
+        throw "Docker execution envelope could not be determined."
+    }
+    $dockerInfo = $dockerInfoRaw | ConvertFrom-Json
+    $dockerVersion = $dockerVersionRaw | ConvertFrom-Json
+
+    return [ordered]@{
+        host = [ordered]@{
+            logical_cpu_count = [int]$computerSystem.NumberOfLogicalProcessors
+            memory_gb = [Math]::Round([double]$computerSystem.TotalPhysicalMemory / 1GB, 2)
+        }
+        container_runtime = [ordered]@{
+            name = "docker"
+            version = [string]$dockerVersion.Version
+            platform = [string]$dockerVersion.Platform.Name
+            allocated_cpu = [int]$dockerInfo.NCPU
+            allocated_memory_gb = [Math]::Round([double]$dockerInfo.MemTotal / 1GB, 2)
+        }
+    }
 }
 
 function Get-EnvironmentMetadata {
@@ -74,9 +110,8 @@ function Get-EnvironmentMetadata {
     }
     $kindVersion = $Matches[1]
 
-    $kubectlVersionRaw = (& kubectl --context $Context version -o json) -join "`n"
-    if ($LASTEXITCODE -ne 0) { throw "Could not determine Kubernetes server version." }
-    $kubernetesVersion = ($kubectlVersionRaw | ConvertFrom-Json).serverVersion.gitVersion
+    $versionSkew = & (Join-Path $PSScriptRoot "Assert-KubectlVersionSkew.ps1") `
+        -Context $Context -PassThru
 
     $nodeJson = ((& kubectl --context $Context get nodes -o json) -join "`n") | ConvertFrom-Json
     $controlPlaneCount = @($nodeJson.items | Where-Object {
@@ -101,9 +136,54 @@ function Get-EnvironmentMetadata {
     }
     $pythonVersion = $Matches[1]
 
+    $clusterName = $Context -replace '^kind-', ''
+    $nodeImageId = (& docker inspect "$clusterName-control-plane" --format '{{.Image}}') -join ""
+    $nodeRepoDigestsRaw = (& docker image inspect $nodeImageId --format '{{json .RepoDigests}}') -join ""
+    if ($LASTEXITCODE -ne 0 -or -not $nodeRepoDigestsRaw) {
+        throw "Could not determine the running kind node image digest."
+    }
+    $nodeRepoDigests = @($nodeRepoDigestsRaw | ConvertFrom-Json)
+    $expectedNodeRepoDigest = "kindest/node@$($versions.KindNodeImageDigest)"
+    if ($nodeRepoDigests -notcontains $expectedNodeRepoDigest) {
+        throw "kind node digest mismatch: expected $expectedNodeRepoDigest."
+    }
+
+    $expectedImages = [ordered]@{
+        runtime_inspector = "python:$($versions.Python)-slim@$($versions.PythonBaseDigest)"
+        storage_inspector = "redis:$($versions.Redis)@$($versions.RedisDigest)"
+        redis = "redis:$($versions.Redis)@$($versions.RedisDigest)"
+        prometheus = "prom/prometheus:$($versions.Prometheus)@$($versions.PrometheusDigest)"
+        grafana = "grafana/grafana:$($versions.Grafana)@$($versions.GrafanaDigest)"
+        kube_state_metrics = "registry.k8s.io/kube-state-metrics/kube-state-metrics:$($versions.KubeStateMetrics)@$($versions.KubeStateMetricsDigest)"
+        metrics_server = "registry.k8s.io/metrics-server/metrics-server:v$($versions.MetricsServerApp)@$($versions.MetricsServerDigest)"
+        keda_operator = "ghcr.io/kedacore/keda:$($versions.KedaApp)@$($versions.KedaOperatorDigest)"
+        keda_metrics_api = "ghcr.io/kedacore/keda-metrics-apiserver:$($versions.KedaApp)@$($versions.KedaMetricsDigest)"
+        keda_webhooks = "ghcr.io/kedacore/keda-admission-webhooks:$($versions.KedaApp)@$($versions.KedaWebhooksDigest)"
+    }
+    $runtimeImages = [ordered]@{
+        kind_node = "$($versions.KindNodeImage)@$($versions.KindNodeImageDigest)"
+        runtime_inspector = Get-WorkloadImage "incident-lab" "statefulset/runtime-inspector"
+        storage_inspector = Get-WorkloadImage "incident-lab" "statefulset/storage-inspector"
+        redis = Get-WorkloadImage "incident-lab" "statefulset/redis"
+        prometheus = Get-WorkloadImage "lab-observability" "deployment/prometheus"
+        grafana = Get-WorkloadImage "lab-observability" "deployment/grafana"
+        kube_state_metrics = Get-WorkloadImage "lab-observability" "deployment/kube-state-metrics"
+        metrics_server = Get-WorkloadImage "kube-system" "deployment/metrics-server"
+        keda_operator = Get-WorkloadImage "keda" "deployment/keda-operator"
+        keda_metrics_api = Get-WorkloadImage "keda" "deployment/keda-operator-metrics-apiserver"
+        keda_webhooks = Get-WorkloadImage "keda" "deployment/keda-admission-webhooks"
+    }
+    foreach ($key in $expectedImages.Keys) {
+        if ($runtimeImages[$key] -ne $expectedImages[$key]) {
+            throw "Runtime image mismatch for ${key}: expected $($expectedImages[$key]), observed $($runtimeImages[$key])."
+        }
+    }
+
     $metadata = [ordered]@{
         kind_version = $kindVersion
-        kubernetes_version = $kubernetesVersion
+        kubectl_client_version = $versionSkew.kubectl_client_version
+        kubernetes_server_version = $versionSkew.kubernetes_server_version
+        kubectl_server_minor_skew = $versionSkew.minor_skew
         control_plane_nodes = $controlPlaneCount
         worker_nodes = $workerCount
         keda_chart_version = $kedaChart
@@ -114,11 +194,13 @@ function Get-EnvironmentMetadata {
         grafana_version = Get-DeploymentImageVersion "lab-observability" "grafana"
         kube_state_metrics_version = Get-DeploymentImageVersion "lab-observability" "kube-state-metrics"
         python_version = $pythonVersion
+        runtime_images = $runtimeImages
     }
 
     $expected = [ordered]@{
         kind_version = $versions.Kind
-        kubernetes_version = $versions.Kubernetes
+        kubectl_client_version = $versions.Kubectl
+        kubernetes_server_version = $versions.Kubernetes
         keda_chart_version = $versions.KedaChart
         keda_app_version = $versions.KedaApp
         metrics_server_chart_version = $versions.MetricsServerChart
@@ -145,12 +227,14 @@ foreach ($scenarioId in $scenarioIds) {
         runtime_evidence = "NOT_RUN"
         reset = "NOT_RUN"
         recovery = "NOT_RUN"
+        warmup_seconds = $null
+        duration_seconds = $null
     }
 }
 
 $gitStatus = @(& git -C $repoRoot status --porcelain)
 $summary = [ordered]@{
-    schema_version = 1
+    schema_version = 2
     generated_at = [DateTime]::UtcNow.ToString('o')
     validation_mode = $Mode
     overall_status = "NOT_RUN"
@@ -160,6 +244,7 @@ $summary = [ordered]@{
         working_tree_dirty = ($gitStatus.Count -gt 0)
     }
     environment = $null
+    execution_environment = $null
     repository_checks = [ordered]@{ status = "NOT_RUN" }
     baseline = [ordered]@{ status = "NOT_RUN" }
     scenarios = $scenarioResults
@@ -180,6 +265,7 @@ $evidenceAreas = @{
 try {
     $currentStep = "environment_metadata"
     $summary.environment = Get-EnvironmentMetadata
+    $summary.execution_environment = Get-ExecutionEnvironment
 
     $currentStep = "repository_checks"
     & (Join-Path $repoRoot "tests\Validate-Repository.ps1")
@@ -198,6 +284,13 @@ try {
     foreach ($scenarioId in $selectedScenarios) {
         $currentIncident = $scenarioId
         $result = $summary.scenarios[$scenarioId]
+        $scenarioStopwatch = [Diagnostics.Stopwatch]::StartNew()
+        $effectiveWarmupSeconds = if ($scenarioId -eq "INC-08") {
+            [Math]::Max($WarmupSeconds, 60)
+        } else {
+            $WarmupSeconds
+        }
+        $result.warmup_seconds = $effectiveWarmupSeconds
 
         $currentStep = "pre_activation_baseline"
         & (Join-Path $PSScriptRoot "Test-Lab.ps1") -Context $Context
@@ -209,11 +302,6 @@ try {
         $result.activation = "PASS"
 
         $currentStep = "symptom_validation"
-        $effectiveWarmupSeconds = if ($scenarioId -eq "INC-08") {
-            [Math]::Max($WarmupSeconds, 60)
-        } else {
-            $WarmupSeconds
-        }
         & (Join-Path $repoRoot "scenario-builder\Test-Scenario.ps1") `
             -Incident $scenarioId -Context $Context -WarmupSeconds $effectiveWarmupSeconds
         $result.symptom_validation = "PASS"
@@ -234,6 +322,9 @@ try {
         $currentStep = "recovery"
         & (Join-Path $PSScriptRoot "Test-Lab.ps1") -Context $Context
         $result.recovery = "PASS"
+        $scenarioStopwatch.Stop()
+        $result.duration_seconds = [Math]::Round($scenarioStopwatch.Elapsed.TotalSeconds, 2)
+        $scenarioStopwatch = $null
     }
 
     $currentIncident = $null
@@ -248,6 +339,10 @@ try {
 }
 catch {
     $originalError = $_
+    if ($scenarioStopwatch -and $scenarioStopwatch.IsRunning -and $currentIncident) {
+        $scenarioStopwatch.Stop()
+        $summary.scenarios[$currentIncident].duration_seconds = [Math]::Round($scenarioStopwatch.Elapsed.TotalSeconds, 2)
+    }
     $summary.overall_status = "FAIL"
     $summary.generated_at = [DateTime]::UtcNow.ToString('o')
     if ($currentIncident -and $summary.scenarios[$currentIncident][$currentStep] -eq "NOT_RUN") {

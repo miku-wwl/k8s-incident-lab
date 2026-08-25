@@ -5,7 +5,6 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$repoRoot = Split-Path -Parent $PSScriptRoot
 $namespace = "incident-lab"
 
 & (Join-Path $PSScriptRoot "Assert-LabCluster.ps1") -Context $Context -RequireNamespaceMarker
@@ -17,17 +16,31 @@ if ($LASTEXITCODE -eq 0 -and $activeScenario) {
     throw "Scenario $activeScenario is still active; this is not a baseline state."
 }
 
-$podsRaw = & kubectl --context $Context -n $namespace get pods `
-    -l app.kubernetes.io/part-of=k8s-incident-lab -o json
-if ($LASTEXITCODE -ne 0) { throw "Could not inspect lab pods." }
-$pods = (($podsRaw -join "`n") | ConvertFrom-Json).items
-$unready = @($pods | Where-Object {
-    $_.status.phase -ne "Running" -or
-    @($_.status.containerStatuses | Where-Object { -not $_.ready }).Count -gt 0
-} | ForEach-Object { $_.metadata.name })
-if ($unready.Count -gt 0) {
-    throw "Baseline has unready pods: $($unready -join ', ')"
+$podReadyDeadline = [DateTimeOffset]::UtcNow.AddMinutes(2)
+do {
+    $podsRaw = & kubectl --context $Context -n $namespace get pods `
+        -l app.kubernetes.io/part-of=k8s-incident-lab -o json
+    if ($LASTEXITCODE -ne 0) { throw "Could not inspect lab pods." }
+    $pods = (($podsRaw -join "`n") | ConvertFrom-Json).items
+    $unready = @($pods | Where-Object {
+        $_.status.phase -ne "Running" -or
+        @($_.status.containerStatuses | Where-Object { -not $_.ready }).Count -gt 0
+    } | ForEach-Object { $_.metadata.name })
+    if ($unready.Count -eq 0) { break }
+    if ([DateTimeOffset]::UtcNow -ge $podReadyDeadline) {
+        throw "Baseline has unready pods after 2 minutes: $($unready -join ', ')"
+    }
+    Start-Sleep -Seconds 3
+} while ($true)
+Write-Output "lab pods: all Ready"
+foreach ($inspector in @("runtime-inspector", "storage-inspector")) {
+    $ready = & kubectl --context $Context -n $namespace get "statefulset/$inspector" `
+        -o jsonpath='{.status.readyReplicas}'
+    if ($LASTEXITCODE -ne 0 -or [int]$ready -ne 1) {
+        throw "Diagnostic workload '$inspector' is not Ready."
+    }
 }
+Write-Output "restricted diagnostic workloads: Ready"
 
 $pvcRaw = (& kubectl --context $Context -n $namespace get pvc -o json) -join "`n"
 if ($LASTEXITCODE -ne 0) { throw "Could not inspect PVC state." }

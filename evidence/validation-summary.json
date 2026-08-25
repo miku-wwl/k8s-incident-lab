@@ -1,16 +1,18 @@
 {
-  "schema_version": 1,
-  "generated_at": "2026-08-24T23:57:21.4285838Z",
+  "schema_version": 2,
+  "generated_at": "2026-08-25T02:18:26.7724359Z",
   "validation_mode": "FullMatrix",
   "overall_status": "PASS",
   "repository": {
     "branch": "main",
-    "commit": "62fe564dd45e6f5a307cd6bf22822467d264b1b1",
-    "working_tree_dirty": false
+    "commit": "4424e2f874aa3c077f7e86de280eccea6b50b21e",
+    "working_tree_dirty": true
   },
   "environment": {
     "kind_version": "v0.32.0",
-    "kubernetes_version": "v1.36.1",
+    "kubectl_client_version": "v1.36.1",
+    "kubernetes_server_version": "v1.36.1",
+    "kubectl_server_minor_skew": 0,
     "control_plane_nodes": 1,
     "worker_nodes": 3,
     "keda_chart_version": "2.20.2",
@@ -20,7 +22,33 @@
     "prometheus_version": "v3.5.0",
     "grafana_version": "12.1.1",
     "kube_state_metrics_version": "v2.15.0",
-    "python_version": "3.13.7"
+    "python_version": "3.13.7",
+    "runtime_images": {
+      "kind_node": "kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5",
+      "runtime_inspector": "python:3.13.7-slim@sha256:5f55cdf0c5d9dc1a415637a5ccc4a9e18663ad203673173b8cda8f8dcacef689",
+      "storage_inspector": "redis:7.4.5-alpine@sha256:bb186d083732f669da90be8b0f975a37812b15e913465bb14d845db72a4e3e08",
+      "redis": "redis:7.4.5-alpine@sha256:bb186d083732f669da90be8b0f975a37812b15e913465bb14d845db72a4e3e08",
+      "prometheus": "prom/prometheus:v3.5.0@sha256:63805ebb8d2b3920190daf1cb14a60871b16fd38bed42b857a3182bc621f4996",
+      "grafana": "grafana/grafana:12.1.1@sha256:a1701c2180249361737a99a01bc770db39381640e4d631825d38ff4535efa47d",
+      "kube_state_metrics": "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.15.0@sha256:db384bf43222b066c378e77027a675d4cd9911107adba46c2922b3a55e10d6fb",
+      "metrics_server": "registry.k8s.io/metrics-server/metrics-server:v0.9.0@sha256:d9862115e7c7881280d3d75ca26bda8ffc0fc213315979575bf23ce9826205c0",
+      "keda_operator": "ghcr.io/kedacore/keda:2.20.2@sha256:fe74c7b8849586a67ad2201bcb89e7f5ac221ff90399ecaa8fd28427f1ef11e6",
+      "keda_metrics_api": "ghcr.io/kedacore/keda-metrics-apiserver:2.20.2@sha256:27286536a8a775aeeee37a7e343f8ecebb27ebf680ee1181a4f99e82eefb253b",
+      "keda_webhooks": "ghcr.io/kedacore/keda-admission-webhooks:2.20.2@sha256:41f74102aba7959c6e8d08b433ab8a5fd6cae7c5646c78f7fe3de40a52df3439"
+    }
+  },
+  "execution_environment": {
+    "host": {
+      "logical_cpu_count": 16,
+      "memory_gb": 31.31
+    },
+    "container_runtime": {
+      "name": "docker",
+      "version": "29.4.3",
+      "platform": "Docker Desktop 4.74.0 (227015)",
+      "allocated_cpu": 16,
+      "allocated_memory_gb": 15.28
+    }
   },
   "repository_checks": {
     "status": "PASS"
@@ -35,7 +63,9 @@
       "symptom_validation": "PASS",
       "runtime_evidence": "PASS",
       "reset": "PASS",
-      "recovery": "PASS"
+      "recovery": "PASS",
+      "warmup_seconds": 30,
+      "duration_seconds": 127.52
     },
     "INC-02": {
       "pre_activation_baseline": "PASS",
@@ -43,7 +73,9 @@
       "symptom_validation": "PASS",
       "runtime_evidence": "PASS",
       "reset": "PASS",
-      "recovery": "PASS"
+      "recovery": "PASS",
+      "warmup_seconds": 30,
+      "duration_seconds": 124.18
     },
     "INC-03": {
       "pre_activation_baseline": "PASS",
@@ -51,7 +83,9 @@
       "symptom_validation": "PASS",
       "runtime_evidence": "PASS",
       "reset": "PASS",
-      "recovery": "PASS"
+      "recovery": "PASS",
+      "warmup_seconds": 30,
+      "duration_seconds": 136.93
     },
     "INC-04": {
       "pre_activation_baseline": "PASS",
@@ -59,7 +93,9 @@
       "symptom_validation": "PASS",
       "runtime_evidence": "PASS",
       "reset": "PASS",
-      "recovery": "PASS"
+      "recovery": "PASS",
+      "warmup_seconds": 30,
+      "duration_seconds": 126.12
     },
     "INC-05": {
       "pre_activation_baseline": "PASS",
@@ -67,7 +103,9 @@
       "symptom_validation": "PASS",
       "runtime_evidence": "PASS",
       "reset": "PASS",
-      "recovery": "PASS"
+      "recovery": "PASS",
+      "warmup_seconds": 30,
+      "duration_seconds": 116.73
     },
     "INC-06": {
       "pre_activation_baseline": "PASS",
@@ -75,7 +113,9 @@
       "symptom_validation": "PASS",
       "runtime_evidence": "PASS",
       "reset": "PASS",
-      "recovery": "PASS"
+      "recovery": "PASS",
+      "warmup_seconds": 30,
+      "duration_seconds": 118.45
     },
     "INC-07": {
       "pre_activation_baseline": "PASS",
@@ -83,7 +123,9 @@
       "symptom_validation": "PASS",
       "runtime_evidence": "PASS",
       "reset": "PASS",
-      "recovery": "PASS"
+      "recovery": "PASS",
+      "warmup_seconds": 30,
+      "duration_seconds": 139.09
     },
     "INC-08": {
       "pre_activation_baseline": "PASS",
@@ -91,7 +133,9 @@
       "symptom_validation": "PASS",
       "runtime_evidence": "PASS",
       "reset": "PASS",
-      "recovery": "PASS"
+      "recovery": "PASS",
+      "warmup_seconds": 60,
+      "duration_seconds": 167.43
     }
   },
   "final_recovery": {

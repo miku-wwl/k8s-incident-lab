@@ -9,22 +9,26 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$kubectlPath = & (Join-Path $PSScriptRoot "Use-LabKubectl.ps1")
 
 if ($Context -notlike "kind-*") {
     throw "The lab is restricted to a disposable kind context; received '$Context'."
 }
 
-$knownContext = & kubectl config get-contexts $Context -o name 2>$null
+$knownContext = & $kubectlPath config get-contexts $Context -o name 2>$null
 if ($LASTEXITCODE -ne 0 -or $knownContext -ne $Context) {
     throw "Kubernetes context '$Context' does not exist."
 }
 
-& kubectl --context $Context cluster-info | Out-Null
+& $kubectlPath --context $Context cluster-info | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw "Kubernetes context '$Context' is not reachable."
 }
 
-$nodeJson = (& kubectl --context $Context get nodes -o json) -join "`n"
+$null = & (Join-Path $PSScriptRoot "Assert-KubectlVersionSkew.ps1") `
+    -Context $Context -KubectlPath $kubectlPath
+
+$nodeJson = (& $kubectlPath --context $Context get nodes -o json) -join "`n"
 if ($LASTEXITCODE -ne 0) {
     throw "Could not inspect kind cluster topology."
 }
@@ -41,12 +45,12 @@ if ($controlPlaneCount -ne 1 -or $workerCount -ne 3) {
 }
 
 if ($RequireNamespaceMarker) {
-    $labId = & kubectl --context $Context get namespace $Namespace `
+    $labId = & $kubectlPath --context $Context get namespace $Namespace `
         -o jsonpath='{.metadata.labels.training\.example\.com/lab-id}'
     if ($LASTEXITCODE -ne 0) {
         throw "Could not inspect namespace '$Namespace'."
     }
-    $disposable = & kubectl --context $Context get namespace $Namespace `
+    $disposable = & $kubectlPath --context $Context get namespace $Namespace `
         -o jsonpath='{.metadata.labels.training\.example\.com/disposable}'
     if ($LASTEXITCODE -ne 0) {
         throw "Could not inspect namespace '$Namespace'."

@@ -18,6 +18,15 @@ $knownContext = & kubectl config get-contexts $Context -o name 2>$null
 if ($LASTEXITCODE -ne 0 -or $knownContext -ne $Context) {
     throw "Kubernetes 上下文 '$Context' 不存在。"
 }
+$versionJson = (& kubectl --context $Context version -o json) -join "`n"
+$version = $versionJson | ConvertFrom-Json
+$clientMatch = [regex]::Match([string]$version.clientVersion.gitVersion, '^v(?<major>\d+)\.(?<minor>\d+)')
+$serverMatch = [regex]::Match([string]$version.serverVersion.gitVersion, '^v(?<major>\d+)\.(?<minor>\d+)')
+if (-not $clientMatch.Success -or -not $serverMatch.Success -or
+    $clientMatch.Groups['major'].Value -ne $serverMatch.Groups['major'].Value -or
+    [Math]::Abs([int]$clientMatch.Groups['minor'].Value - [int]$serverMatch.Groups['minor'].Value) -gt 1) {
+    throw "kubectl 客户端与 Kubernetes 服务端版本偏差不受支持。"
+}
 $nodeJson = (& kubectl --context $Context get nodes -o json) -join "`n"
 $nodes = ($nodeJson | ConvertFrom-Json).items
 $controlPlaneCount = @($nodes | Where-Object {
@@ -48,7 +57,7 @@ switch ($Area) {
         Show-Command "工作负载" { kubectl --context $Context -n $namespace get deploy,statefulset,pods -o wide }
         Show-Command "Service" { kubectl --context $Context -n $namespace get services }
         Show-Command "近期事件" { kubectl --context $Context -n $namespace get events --sort-by=.lastTimestamp }
-        Show-Command "症状型告警" { kubectl --context $Context -n lab-observability exec deployment/prometheus -- wget -qO- 'http://localhost:9090/api/v1/alerts' }
+        Show-Command "症状型告警" { kubectl --context $Context get --raw '/api/v1/namespaces/lab-observability/services/http:prometheus:9090/proxy/api/v1/alerts' }
     }
     "changes" {
         Show-Command "发布历史" { kubectl --context $Context -n $namespace rollout history deployment/gateway }
@@ -63,7 +72,7 @@ switch ($Area) {
         Show-Command "Gateway 工作负载和 Pods" { kubectl --context $Context -n $namespace get deployment,pods -l app.kubernetes.io/name=gateway -o wide }
         Show-Command "Gateway Service 运行时对象" { kubectl --context $Context -n $namespace get service/gateway -o yaml }
         Show-Command "Gateway Deployment 运行时对象" { kubectl --context $Context -n $namespace get deployment -l app.kubernetes.io/name=gateway -o yaml }
-        Show-Command "代表性路径结果" { kubectl --context $Context -n lab-observability exec deployment/prometheus -- wget -qO- 'http://localhost:9090/api/v1/query?query=sum%20by%20%28target%2Cresult%29%20%28rate%28lab_load_requests_total%5B1m%5D%29%29' }
+        Show-Command "代表性路径结果" { kubectl --context $Context get --raw '/api/v1/namespaces/lab-observability/services/http:prometheus:9090/proxy/api/v1/query?query=sum%20by%20%28target%2Cresult%29%20%28rate%28lab_load_requests_total%5B1m%5D%29%29' }
     }
     "capacity" {
         Show-Command "资源使用" { kubectl --context $Context -n $namespace top pods }
@@ -73,22 +82,22 @@ switch ($Area) {
     "queue" {
         Show-Command "Worker" { kubectl --context $Context -n $namespace get deployment/worker -o wide }
         Show-Command "队列伸缩器" { kubectl --context $Context -n $namespace get hpa,scaledobject -o wide }
-        Show-Command "队列信号" { kubectl --context $Context -n lab-observability exec deployment/prometheus -- wget -qO- 'http://localhost:9090/api/v1/query?query=max%28lab_queue_depth%29%20or%20max%28lab_oldest_message_age_seconds%29' }
+        Show-Command "队列信号" { kubectl --context $Context get --raw '/api/v1/namespaces/lab-observability/services/http:prometheus:9090/proxy/api/v1/query?query=max%28lab_queue_depth%29%20or%20max%28lab_oldest_message_age_seconds%29' }
         Show-Command "Worker 日志" { kubectl --context $Context -n $namespace logs deployment/worker --tail=80 }
     }
     "storage" {
-        Show-Command "有状态对象" { kubectl --context $Context -n $namespace get statefulset,pvc,pv -o wide }
+        Show-Command "有状态对象" { kubectl --context $Context -n $namespace get statefulset,pvc -o wide }
         Show-Command "近期存储 Job" { kubectl --context $Context -n $namespace get job --sort-by=.metadata.creationTimestamp -o wide }
         Show-Command "近期 Pods" { kubectl --context $Context -n $namespace get pod --sort-by=.metadata.creationTimestamp -o wide }
         Show-Command "Storage 工作负载" { kubectl --context $Context -n $namespace describe statefulset/storage }
-        Show-Command "挂载点与文件系统" { kubectl --context $Context -n $namespace exec statefulset/storage -c app -- sh -c 'id; df -h /data; ls -ld /data; ls -la /data | head -20' }
-        Show-Command "Storage 读写信号" { kubectl --context $Context -n lab-observability exec deployment/prometheus -- wget -qO- 'http://localhost:9090/api/v1/query?query=sum%20by%20%28operation%29%20%28rate%28lab_storage_errors_total%5B1m%5D%29%29' }
+        Show-Command "挂载点与文件系统" { kubectl --context $Context -n $namespace exec pod/storage-inspector-0 -- sh -c 'id; df -h /data; ls -ld /data; ls -la /data | head -20' }
+        Show-Command "Storage 读写信号" { kubectl --context $Context get --raw '/api/v1/namespaces/lab-observability/services/http:prometheus:9090/proxy/api/v1/query?query=sum%20by%20%28operation%29%20%28rate%28lab_storage_errors_total%5B1m%5D%29%29' }
         Show-Command "Storage 日志" { kubectl --context $Context -n $namespace logs statefulset/storage -c app --tail=100 }
     }
     "dns" {
         Show-Command "集群 DNS 对象" { kubectl --context $Context -n kube-system get deployment,pods,service,endpointslice -l k8s-app=kube-dns -o wide }
         Show-Command "集群 DNS 资源使用" { kubectl --context $Context -n kube-system top pods -l k8s-app=kube-dns }
-        Show-Command "服务发现指标" { kubectl --context $Context -n lab-observability exec deployment/prometheus -- wget -qO- 'http://localhost:9090/api/v1/query?query=sum%28rate%28coredns_dns_requests_total%5B1m%5D%29%29%20or%20histogram_quantile%280.95%2Csum%20by%20%28le%29%20%28rate%28lab_dns_query_duration_seconds_bucket%5B1m%5D%29%29%29' }
+        Show-Command "服务发现指标" { kubectl --context $Context get --raw '/api/v1/namespaces/lab-observability/services/http:prometheus:9090/proxy/api/v1/query?query=sum%28rate%28coredns_dns_requests_total%5B1m%5D%29%29%20or%20histogram_quantile%280.95%2Csum%20by%20%28le%29%20%28rate%28lab_dns_query_duration_seconds_bucket%5B1m%5D%29%29%29' }
         $dnsProbe = @'
 import os
 import socket
@@ -126,7 +135,7 @@ for service in ["gateway", "catalog", "orders", "storage", "identity"]:
             client.close()
     print(service, " ".join(outcomes))
 '@
-        Show-Command "Pod 内 DNS 采样" { kubectl --context $Context -n $namespace exec deployment/traffic-gateway -- python -c $dnsProbe }
+        Show-Command "Pod 内 DNS 采样" { kubectl --context $Context -n $namespace exec pod/runtime-inspector-0 -- python -c $dnsProbe }
         Show-Command "CoreDNS 日志" { kubectl --context $Context -n kube-system logs deployment/coredns --tail=100 }
         Show-Command "跨服务失败日志" { kubectl --context $Context -n $namespace logs deployment/gateway --tail=80 }
     }

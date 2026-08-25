@@ -10,13 +10,14 @@
     "overall_status",
     "repository",
     "environment",
+    "execution_environment",
     "repository_checks",
     "baseline",
     "scenarios",
     "final_recovery"
   ],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "generated_at": { "type": "string", "format": "date-time" },
     "validation_mode": { "enum": ["BaselineOnly", "SingleScenario", "FullMatrix"] },
     "overall_status": { "$ref": "#/$defs/status" },
@@ -33,14 +34,17 @@
     "environment": {
       "type": "object",
       "required": [
-        "kind_version", "kubernetes_version", "control_plane_nodes", "worker_nodes",
+        "kind_version", "kubectl_client_version", "kubernetes_server_version",
+        "kubectl_server_minor_skew", "control_plane_nodes", "worker_nodes",
         "keda_chart_version", "keda_app_version", "metrics_server_chart_version",
         "metrics_server_app_version", "prometheus_version", "grafana_version",
-        "kube_state_metrics_version", "python_version"
+        "kube_state_metrics_version", "python_version", "runtime_images"
       ],
       "properties": {
         "kind_version": { "type": "string" },
-        "kubernetes_version": { "type": "string" },
+        "kubectl_client_version": { "type": "string" },
+        "kubernetes_server_version": { "type": "string" },
+        "kubectl_server_minor_skew": { "type": "integer", "minimum": 0, "maximum": 1 },
         "control_plane_nodes": { "const": 1 },
         "worker_nodes": { "const": 3 },
         "keda_chart_version": { "type": "string" },
@@ -50,7 +54,44 @@
         "prometheus_version": { "type": "string" },
         "grafana_version": { "type": "string" },
         "kube_state_metrics_version": { "type": "string" },
-        "python_version": { "type": "string" }
+        "python_version": { "type": "string" },
+        "runtime_images": {
+          "type": "object",
+          "required": [
+            "kind_node", "runtime_inspector", "storage_inspector", "redis",
+            "prometheus", "grafana", "kube_state_metrics",
+            "metrics_server", "keda_operator", "keda_metrics_api", "keda_webhooks"
+          ],
+          "additionalProperties": { "$ref": "#/$defs/digestImage" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "execution_environment": {
+      "type": "object",
+      "required": ["host", "container_runtime"],
+      "properties": {
+        "host": {
+          "type": "object",
+          "required": ["logical_cpu_count", "memory_gb"],
+          "properties": {
+            "logical_cpu_count": { "type": "integer", "minimum": 1 },
+            "memory_gb": { "type": "number", "exclusiveMinimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "container_runtime": {
+          "type": "object",
+          "required": ["name", "version", "platform", "allocated_cpu", "allocated_memory_gb"],
+          "properties": {
+            "name": { "const": "docker" },
+            "version": { "type": "string" },
+            "platform": { "type": "string" },
+            "allocated_cpu": { "type": ["integer", "null"], "minimum": 1 },
+            "allocated_memory_gb": { "type": ["number", "null"], "exclusiveMinimum": 0 }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },
@@ -84,16 +125,22 @@
     },
     "scenarioResult": {
       "type": "object",
-      "required": ["pre_activation_baseline", "activation", "symptom_validation", "runtime_evidence", "reset", "recovery"],
+      "required": ["pre_activation_baseline", "activation", "symptom_validation", "runtime_evidence", "reset", "recovery", "warmup_seconds", "duration_seconds"],
       "properties": {
         "pre_activation_baseline": { "$ref": "#/$defs/status" },
         "activation": { "$ref": "#/$defs/status" },
         "symptom_validation": { "$ref": "#/$defs/status" },
         "runtime_evidence": { "$ref": "#/$defs/status" },
         "reset": { "$ref": "#/$defs/status" },
-        "recovery": { "$ref": "#/$defs/status" }
+        "recovery": { "$ref": "#/$defs/status" },
+        "warmup_seconds": { "type": ["integer", "null"], "minimum": 0 },
+        "duration_seconds": { "type": ["number", "null"], "minimum": 0 }
       },
       "additionalProperties": false
+    },
+    "digestImage": {
+      "type": "string",
+      "pattern": "^[^@\\s]+@sha256:[0-9a-f]{64}$"
     }
   }
 }

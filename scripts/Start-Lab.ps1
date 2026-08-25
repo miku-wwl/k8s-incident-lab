@@ -11,6 +11,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $namespace = "incident-lab"
 $clusterName = "incident-lab"
 $versions = Import-PowerShellDataFile (Join-Path $PSScriptRoot "LabVersions.psd1")
+$null = & (Join-Path $PSScriptRoot "Use-LabKubectl.ps1")
 $MetricsServerChartVersion = $versions.MetricsServerChart
 $KedaChartVersion = $versions.KedaChart
 
@@ -24,7 +25,10 @@ if ($CreateKindCluster) {
     $kindPath = & (Join-Path $PSScriptRoot "Install-LocalKind.ps1")
     $existing = & $kindPath get clusters
     if ($existing -notcontains $clusterName) {
-        & $kindPath create cluster --name $clusterName --config (Join-Path $repoRoot "platform\cluster\kind-config.yaml")
+        $nodeImage = "$($versions.KindNodeImage)@$($versions.KindNodeImageDigest)"
+        & $kindPath create cluster --name $clusterName `
+            --image $nodeImage `
+            --config (Join-Path $repoRoot "platform\cluster\kind-config.yaml")
         if ($LASTEXITCODE -ne 0) { throw "kind cluster creation failed." }
     }
     $Context = "kind-$clusterName"
@@ -64,6 +68,7 @@ if (-not $SkipAddons) {
     & helm upgrade --install keda kedacore/keda `
         --kube-context $Context --namespace keda --create-namespace `
         --version $KedaChartVersion `
+        --values (Join-Path $repoRoot "platform\addons\keda-values.yaml") `
         --wait --timeout 5m
     if ($LASTEXITCODE -ne 0) { throw "KEDA installation failed." }
 }
@@ -88,6 +93,10 @@ if ($LASTEXITCODE -ne 0) { throw "Not all deployments became Available." }
 if ($LASTEXITCODE -ne 0) { throw "Redis did not become ready." }
 & kubectl --context $Context -n $namespace rollout status statefulset/storage --timeout=3m
 if ($LASTEXITCODE -ne 0) { throw "Storage did not become ready." }
+foreach ($inspector in @("runtime-inspector", "storage-inspector")) {
+    & kubectl --context $Context -n $namespace rollout status "statefulset/$inspector" --timeout=3m
+    if ($LASTEXITCODE -ne 0) { throw "Diagnostic workload '$inspector' did not become ready." }
+}
 & kubectl --context $Context -n lab-observability wait --for=condition=Available deployment --all --timeout=5m
 if ($LASTEXITCODE -ne 0) { throw "Observability did not become ready." }
 

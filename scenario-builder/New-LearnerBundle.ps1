@@ -51,4 +51,4 @@ $contents | Set-Content -LiteralPath (Join-Path $outputFull "BUNDLE-CONTENTS.txt
 
 Write-Output "LEARNER_BUNDLE_READY incident=$Incident path=$outputFull"
 Write-Output "The bundle excludes source, Builder scripts, evaluator rubrics and ground truth."
-Write-Output "Start Coach Codex with '$outputFull' as its working directory."
+Write-Output "Start the Coach through scripts\Start-CoachSandbox.ps1; a host process is not filesystem-isolated."

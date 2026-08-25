@@ -2,16 +2,18 @@
 
 此目录是本次 GameDay 唯一允许提供给学员和教练 Codex 的文件材料。
 
-## 强制工作目录边界
+## 强制进程边界
 
-Coach Codex **必须以这个生成后的学员目录作为工作目录启动**，不得以 Owner 仓库 checkout 作为工作目录。先进入本目录，再启动一个全新的 Coach 会话：
+这个九文件包证明 Owner 内容没有被复制进来，但单独切换宿主机工作目录并不能阻止同一 Windows 用户读取 Owner 仓库。Coach AI 进程必须通过 Owner 的 Docker 隔离启动器运行；容器中只挂载本目录和只读、短时、最小权限 kubeconfig：
 
 ```powershell
-Set-Location C:\gameday\INC-XX
-# 从这里启动 Coach Codex，并提供 COACH-PROMPT.md
+.\scripts\Start-CoachSandbox.ps1 `
+  -BundlePath C:\gameday\INC-XX `
+  -Context kind-incident-lab `
+  -Interactive
 ```
 
-Owner 仓库是控制面；本学员包是调查面。Coach 不需要、也不得拥有 Owner 仓库的文件系统访问权限。
+默认镜像提供隔离的 PowerShell/kubectl 调查 shell。实际 Coach AI CLI 必须安装并启动在同一容器边界内；从 Owner checkout 或宿主机直接启动的 Codex **不符合隔离要求**。Owner 仓库是控制面；本学员包是调查面。
 
 允许使用：
 

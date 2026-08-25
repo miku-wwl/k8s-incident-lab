@@ -18,11 +18,10 @@
 
 - Windows PowerShell 7+
 - 运行 Linux 容器的 Docker Desktop
-- `kubectl`
 - `helm`
 - 能访问互联网，以拉取容器镜像以及 metrics-server/KEDA Helm Chart
 
-安装脚本会把固定版本的 `kind.exe` 下载到已被 Git 忽略的 `.tools/` 目录，使用官方发布校验和验证后使用，不会执行全局安装。
+安装脚本会把固定版本的 `kind.exe` 和 `kubectl.exe` 下载到已被 Git 忽略的 `.tools/` 目录，使用官方发布校验和验证后使用，不会执行全局安装。
 
 ## 快速开始
 
@@ -95,16 +94,24 @@ C:\gameday\INC-01\
 
 支持的 area 包括 `summary`、`changes`、`service-path`、`capacity`、`queue`、`storage` 和 `dns`。选择调查方向是响应者的判断，并不等于获得答案。
 
-### 3. 全新的教练会话
+### 3. 隔离的教练进程
 
-先切换到生成后的仓库外学员目录，再从该目录启动一个新的 Codex 会话，并提供安全包中的 `COACH-PROMPT.md`：
+九文件安全包提供内容隔离，但同一 Windows 用户仅靠切换目录仍可能读取 Owner 仓库。必须由 Owner 从控制面启动 Docker 隔离边界：
 
 ```powershell
-Set-Location C:\gameday\INC-01
-# 必须从这里启动 Coach Codex
+.\scripts\Start-CoachSandbox.ps1 `
+  -BundlePath C:\gameday\INC-01 `
+  -Context kind-incident-lab `
+  -Interactive
 ```
 
-Coach Codex **不得从 Owner 仓库 checkout 启动**。Owner 仓库是控制面，生成的学员包是调查面。教练只能使用真实响应者能够获取的证据，并且在文件系统层面看不到完整仓库、源码、Git 历史、场景构建器和 Evaluator 材料。
+默认镜像提供 PowerShell、固定版 kubectl 和学员调查工具。实际 Coach AI CLI 必须位于同一容器或经过相同负测试的派生镜像中；宿主机 Codex 不算隔离。容器只挂载学员包与只读短时 kubeconfig，不挂载 Owner checkout 或 Docker socket。Owner 仓库是控制面，生成的学员包是调查面。
+
+Owner 可以在交付前运行真实负测试：
+
+```powershell
+.\tests\Test-CoachProcessIsolation.ps1 -Context kind-incident-lab
+```
 
 ### 4. 恢复、提交 RCA 与证据门
 
@@ -157,7 +164,8 @@ apps/lab-service/          可复用的同步、异步和有状态实验工作�
 evidence/                  不含答案的机器可读运行验证证据
 platform/base/             健康工作负载、流量、HPA 和 PDB
 platform/observability/    Prometheus、症状型告警、Grafana 和 kube-state-metrics
-platform/addons/           metrics-server values 和 KEDA 队列伸缩配置
+platform/addons/           固定镜像的 addons、KEDA 队列伸缩和学员最小权限 RBAC
+platform/coach/            只包含 PowerShell 与固定版 kubectl 的 Coach 隔离镜像
 learner/                   安全简报、模板、教练契约和运行时辅助脚本
 scenario-builder/          私有注入、恢复脚本和仅限场景构建器的说明
 evaluator/                 Owner 私有 Ground Truth、评估打包和评分工作表
@@ -182,6 +190,7 @@ tests/                     仓库静态验证
 | 组件 | 版本 |
 |---|---|
 | kind | `v0.32.0` |
+| kubectl client | `v1.36.1` |
 | Kubernetes | `v1.36.1` |
 | KEDA chart / app | `2.20.2` / `2.20.2` |
 | metrics-server chart / app | `3.14.0` / `0.9.0` |
@@ -189,3 +198,5 @@ tests/                     仓库静态验证
 | Grafana | `12.1.1` |
 | kube-state-metrics | `v2.15.0` |
 | Python | `3.13.7` |
+
+关键外部运行镜像同时固定 tag 与真实 registry digest；本地构建的 `k8s-incident-lab/service` 镜像未发布到 registry，因此保留 release tag，但其 Python 基础镜像已固定 digest。

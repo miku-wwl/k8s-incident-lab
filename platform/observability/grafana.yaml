@@ -137,7 +137,7 @@ spec:
     spec:
       containers:
         - name: grafana
-          image: grafana/grafana:12.1.1
+          image: grafana/grafana:12.1.1@sha256:a1701c2180249361737a99a01bc770db39381640e4d631825d38ff4535efa47d
           env:
             - name: GF_AUTH_ANONYMOUS_ENABLED
               value: "true"

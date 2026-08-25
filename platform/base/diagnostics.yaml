@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: runtime-inspector
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/name: runtime-inspector
+    app.kubernetes.io/component: diagnostic
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  serviceName: runtime-inspector
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: runtime-inspector
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: runtime-inspector
+        app.kubernetes.io/component: diagnostic
+        app.kubernetes.io/part-of: k8s-incident-lab
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: inspector
+          image: python:3.13.7-slim@sha256:5f55cdf0c5d9dc1a415637a5ccc4a9e18663ad203673173b8cda8f8dcacef689
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-c", "import time; time.sleep(31536000)"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+          resources:
+            requests:
+              cpu: 5m
+              memory: 24Mi
+            limits:
+              cpu: 50m
+              memory: 64Mi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: storage-inspector
+  namespace: incident-lab
+  labels:
+    app.kubernetes.io/name: storage-inspector
+    app.kubernetes.io/component: diagnostic
+    app.kubernetes.io/part-of: k8s-incident-lab
+spec:
+  serviceName: storage-inspector
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: storage-inspector
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: storage-inspector
+        app.kubernetes.io/component: diagnostic
+        app.kubernetes.io/part-of: k8s-incident-lab
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: inspector
+          image: redis:7.4.5-alpine@sha256:bb186d083732f669da90be8b0f975a37812b15e913465bb14d845db72a4e3e08
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "sleep 31536000"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 48Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: data-storage-0

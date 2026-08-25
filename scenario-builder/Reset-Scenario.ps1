@@ -92,6 +92,8 @@ foreach ($deployment in @($deployments)) {
     }
 }
 Invoke-Kubectl -n $namespace rollout status statefulset/storage --timeout=3m
+Invoke-Kubectl -n $namespace rollout status statefulset/runtime-inspector --timeout=3m
+Invoke-Kubectl -n $namespace rollout status statefulset/storage-inspector --timeout=3m
 Invoke-Kubectl -n $namespace delete configmap scenario-state
 
 if (Test-Path -LiteralPath $statePath) {

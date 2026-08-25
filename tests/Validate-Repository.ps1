@@ -4,6 +4,7 @@ param()
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $failures = [System.Collections.Generic.List[string]]::new()
+$labKubectlPath = & (Join-Path $repoRoot "scripts\Use-LabKubectl.ps1")
 
 function Add-Failure([string]$Message) {
     $failures.Add($Message)
@@ -114,7 +115,9 @@ $guardedWorkflows = @(
     "scenario-builder\Start-Scenario.ps1",
     "scenario-builder\Reset-Scenario.ps1",
     "scenario-builder\Test-Scenario.ps1",
-    "scripts\Invoke-FullValidation.ps1"
+    "scripts\Invoke-FullValidation.ps1",
+    "scripts\New-LearnerKubeconfig.ps1",
+    "evaluator\New-EvaluationPackage.ps1"
 )
 foreach ($relativePath in $guardedWorkflows) {
     $workflowPath = Join-Path $repoRoot $relativePath
@@ -133,8 +136,27 @@ if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) {
     Add-Failure "Missing validated runtime version manifest."
 } else {
     $versions = Import-PowerShellDataFile $versionFile
-    foreach ($key in @("Kind", "Kubernetes", "MetricsServerChart", "MetricsServerApp", "KedaChart", "KedaApp", "Prometheus", "Grafana", "KubeStateMetrics", "Python")) {
+    $requiredVersionKeys = @(
+        "Kind", "Kubectl", "KubectlWindowsSha256", "KubectlLinuxSha256", "Kubernetes",
+        "KindNodeImage", "KindNodeImageDigest", "MetricsServerChart", "MetricsServerApp",
+        "MetricsServerDigest", "KedaChart", "KedaApp", "KedaOperatorDigest",
+        "KedaMetricsDigest", "KedaWebhooksDigest", "Prometheus", "PrometheusDigest",
+        "Grafana", "GrafanaDigest", "KubeStateMetrics", "KubeStateMetricsDigest",
+        "Python", "PythonBaseDigest", "Redis", "RedisDigest", "CoachPowerShell",
+        "CoachBaseImage", "CoachBaseDigest"
+    )
+    foreach ($key in $requiredVersionKeys) {
         if (-not $versions[$key]) { Add-Failure "Missing pinned version value: $key" }
+    }
+    foreach ($key in @($requiredVersionKeys | Where-Object { $_ -match 'Digest$|Sha256$' })) {
+        $digestValue = [string]$versions[$key]
+        $digestPattern = if ($key -match 'Sha256$') { '^[0-9a-f]{64}$' } else { '^sha256:[0-9a-f]{64}$' }
+        if ($digestValue -notmatch $digestPattern) { Add-Failure "Invalid SHA-256 value: $key" }
+    }
+
+    $clientRaw = (& $labKubectlPath version --client -o json) -join "`n"
+    if ($LASTEXITCODE -ne 0 -or ($clientRaw | ConvertFrom-Json).clientVersion.gitVersion -ne $versions.Kubectl) {
+        Add-Failure "Repository validation is not using the pinned kubectl client."
     }
     $startLabContent = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts\Start-Lab.ps1")
     if ($startLabContent -notmatch '--version\s+\$MetricsServerChartVersion') {
@@ -142,6 +164,40 @@ if (-not (Test-Path -LiteralPath $versionFile -PathType Leaf)) {
     }
     if ($startLabContent -notmatch '--version\s+\$KedaChartVersion') {
         Add-Failure "KEDA Helm install is not explicitly version-pinned."
+    }
+    if ($startLabContent -notmatch '--image\s+\$nodeImage') {
+        Add-Failure "kind cluster creation is not explicitly node-image pinned."
+    }
+    if ($startLabContent -notmatch 'keda-values\.yaml') {
+        Add-Failure "KEDA runtime images are not supplied through pinned values."
+    }
+
+    $expectedImagePins = [ordered]@{
+        "apps\lab-service\Dockerfile" = "python:$($versions.Python)-slim@$($versions.PythonBaseDigest)"
+        "platform\base\workloads.yaml" = "redis:$($versions.Redis)@$($versions.RedisDigest)"
+        "platform\base\diagnostics.yaml" = "python:$($versions.Python)-slim@$($versions.PythonBaseDigest)"
+        "platform\observability\prometheus.yaml" = "prom/prometheus:$($versions.Prometheus)@$($versions.PrometheusDigest)"
+        "platform\observability\grafana.yaml" = "grafana/grafana:$($versions.Grafana)@$($versions.GrafanaDigest)"
+        "platform\observability\kube-state-metrics.yaml" = "registry.k8s.io/kube-state-metrics/kube-state-metrics:$($versions.KubeStateMetrics)@$($versions.KubeStateMetricsDigest)"
+        "platform\addons\metrics-server-values.yaml" = "v$($versions.MetricsServerApp)@$($versions.MetricsServerDigest)"
+        "platform\addons\keda-values.yaml" = "$($versions.KedaApp)@$($versions.KedaOperatorDigest)"
+        "platform\coach\Dockerfile" = "$($versions.CoachBaseImage)@$($versions.CoachBaseDigest)"
+    }
+    foreach ($entry in $expectedImagePins.GetEnumerator()) {
+        $content = Get-Content -Raw -LiteralPath (Join-Path $repoRoot $entry.Key)
+        if ($content -notmatch [regex]::Escape($entry.Value)) {
+            Add-Failure "Missing immutable image pin in $($entry.Key)."
+        }
+    }
+    $diagnosticContent = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "platform\base\diagnostics.yaml")
+    if ($diagnosticContent -notmatch [regex]::Escape("redis:$($versions.Redis)@$($versions.RedisDigest)")) {
+        Add-Failure "Storage diagnostic image is not digest-pinned."
+    }
+    $kedaValuesContent = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "platform\addons\keda-values.yaml")
+    foreach ($digest in @($versions.KedaOperatorDigest, $versions.KedaMetricsDigest, $versions.KedaWebhooksDigest)) {
+        if ($kedaValuesContent -notmatch [regex]::Escape($digest)) {
+            Add-Failure "KEDA values do not pin all runtime component digests."
+        }
     }
 }
 
@@ -176,6 +232,25 @@ foreach ($forbiddenCopy in @("apps", "platform", "scenario-builder", "evaluator"
 }
 if ($boundaryScript -notmatch 'Test-LearnerBundleIsolation\.ps1') {
     Add-Failure "Learner bundle generator does not enforce the structural isolation test."
+}
+
+foreach ($isolationFile in @(
+    "scripts\Start-CoachSandbox.ps1",
+    "scripts\Get-CoachDockerArguments.ps1",
+    "scripts\New-LearnerKubeconfig.ps1",
+    "tests\Test-CoachProcessIsolation.ps1",
+    "platform\coach\Dockerfile",
+    "platform\addons\learner-access.yaml"
+)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $repoRoot $isolationFile) -PathType Leaf)) {
+        Add-Failure "Missing Coach process-isolation component: $isolationFile"
+    }
+}
+$coachLauncher = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts\Get-CoachDockerArguments.ps1")
+foreach ($requiredBoundary in @("--read-only", "--cap-drop", "no-new-privileges", "/workspace", "/run/learner/kubeconfig")) {
+    if ($coachLauncher -notmatch [regex]::Escape($requiredBoundary)) {
+        Add-Failure "Coach launcher is missing process boundary: $requiredBoundary"
+    }
 }
 
 $bundleTestRoot = Join-Path ([IO.Path]::GetTempPath()) `
@@ -219,14 +294,14 @@ if (Test-Path -LiteralPath $evidencePath -PathType Leaf) {
         $evidence = $evidenceRaw | ConvertFrom-Json
         $requiredEvidenceFields = @(
             "schema_version", "generated_at", "validation_mode", "overall_status", "repository",
-            "environment", "repository_checks", "baseline", "scenarios", "final_recovery"
+            "environment", "execution_environment", "repository_checks", "baseline", "scenarios", "final_recovery"
         )
         foreach ($field in $requiredEvidenceFields) {
             if ($evidence.PSObject.Properties.Name -notcontains $field) {
                 Add-Failure "Validation evidence is missing field: $field"
             }
         }
-        if ($evidence.schema_version -ne 1) { Add-Failure "Validation evidence schema_version must be 1." }
+        if ($evidence.schema_version -ne 2) { Add-Failure "Validation evidence schema_version must be 2." }
         if ($evidence.environment.control_plane_nodes -ne 1 -or $evidence.environment.worker_nodes -ne 3) {
             Add-Failure "Validation evidence topology must be exactly 1+3."
         }
@@ -243,6 +318,9 @@ if (Test-Path -LiteralPath $evidencePath -PathType Leaf) {
                     Add-Failure "Invalid evidence status for $scenarioName/$field."
                 }
             }
+            if ($null -eq $scenarioResult.warmup_seconds -or $null -eq $scenarioResult.duration_seconds) {
+                Add-Failure "Full-matrix evidence timing is missing for $scenarioName."
+            }
         }
         $evidenceSpoilers = @(
             'selector mismatch', 'SQLite lock', 'CoreDNS.{0,12}(CPU|限流|配置错误)',
@@ -252,6 +330,9 @@ if (Test-Path -LiteralPath $evidencePath -PathType Leaf) {
             if ($evidenceRaw -match $pattern) {
                 Add-Failure "Validation evidence contains scenario-answer material."
             }
+        }
+        if ($evidenceRaw -match '(?i)[A-Z]:\\|/Users/|/home/') {
+            Add-Failure "Validation evidence contains an absolute owner/host path."
         }
     }
     catch {
@@ -264,7 +345,7 @@ if ($applicationSource -match 'INCIDENT_MODE') {
     Add-Failure "Application contains forbidden INCIDENT_MODE fault switching."
 }
 
-$secretPattern = '(?i)(api[_-]?key|client[_-]?secret|private[_-]?key|password\s*[:=]|token\s*[:=]|BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY)'
+$secretPattern = '(?i)(api[_-]?key|client[_-]?secret|private[_-]?key|password\s*[:=]|token\s*[:=]\s*["'']?[A-Za-z0-9_.+/=-]{8,}|BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY)'
 $secretFiles = Get-ChildItem -LiteralPath $repoRoot -Recurse -File |
     Where-Object {
         $_.FullName -notmatch '[\\/]\.git[\\/]' -and

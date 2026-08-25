@@ -22,11 +22,11 @@ $repoFull = [IO.Path]::GetFullPath($repoRoot).TrimEnd([IO.Path]::DirectorySepara
 $outputFull = [IO.Path]::GetFullPath($OutputPath)
 $submissionFull = [IO.Path]::GetFullPath($SubmissionPath)
 
+& (Join-Path $repoRoot "scripts\Assert-LabCluster.ps1") `
+    -Context $Context -RequireNamespaceMarker
+
 if (-not $InvestigationClosed) {
     throw "Pass -InvestigationClosed only after the learner submitted RCA and investigation ended."
-}
-if ($Context -notlike "kind-*") {
-    throw "Evaluation lifecycle verification is restricted to a kind context."
 }
 if (-not (Test-Path -LiteralPath $submissionFull -PathType Leaf)) {
     throw "Learner submission was not found: $submissionFull"

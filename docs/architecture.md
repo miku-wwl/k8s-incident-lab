@@ -29,9 +29,11 @@ Grafana    <- Prometheus
 | Owner 控制面 | 完整 Git checkout、`scenario-builder/`、应用源代码、仓库历史/差异 | 仅场景构建器/Owner |
 | Evaluator 私有区 | `evaluator/rubrics/` 和调查关闭后生成的仓库外评估包 | 仅 Owner 和 Evaluator |
 
-教练必须运行在全新的会话中，因为提示词指令无法清除另一个会话已经看过的上下文。学员和教练都不能获得完整 checkout；这样可以在文件分发层面阻断源代码、Builder 脚本和 Ground Truth，而不只是依赖行为约定。
+教练必须运行在全新的会话中，因为提示词指令无法清除另一个会话已经看过的上下文。九文件 allowlist 只证明分发包没有复制 Owner 内容；它本身不限制同一宿主用户的读取权限。
 
-Coach Codex 必须以仓库外生成的学员包作为工作目录启动，不能从 Owner checkout 启动。Owner 仓库是控制面，学员包是调查面；`Test-LearnerBundleIsolation.ps1` 使用九文件 allowlist、目录/链接拒绝和仓库外路径检查来验证这一物理边界。
+Coach AI 必须在 `Start-CoachSandbox.ps1` 创建的 Docker 进程边界内启动。容器仅绑定 `/workspace` 学员包和只读短时 kubeconfig，不挂载 Owner 仓库或 Docker socket，并使用只读根文件系统、非 root 用户、capability drop 和 `no-new-privileges`。`Test-LearnerBundleIsolation.ps1` 验证内容边界；`Test-CoachProcessIsolation.ps1` 通过实际容器、mount inspect、运行时允许命令和拒绝访问测试验证进程边界。
+
+Learner RBAC 不允许进入应用或 Prometheus 容器。需要进程内观察的范围只开放给两个无应用源码、禁用 ServiceAccount token 的诊断 StatefulSet；Prometheus 查询通过精确限制到单一 Service 的 Kubernetes API proxy 完成。
 
 ## 场景生命周期不变量
 
