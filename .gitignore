@@ -1,4 +1,5 @@
 .tools/
 .scenario-state/
+tmp/
 __pycache__/
 *.pyc
